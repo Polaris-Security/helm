@@ -1,0 +1,134 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: polaris
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # SSE buffering: the streaming endpoint sets X-Accel-Buffering: no on its response,
+    # which nginx honours per-response without requiring a blanket proxy_buffering off.
+    # Non-streaming endpoints retain default buffering. See ADR-0014.
+spec:
+  ingressClassName: bunkerweb
+  tls:
+    - hosts:
+        - vels.online
+        - polaris-security.nl
+      #secretName: polaris-tls
+
+  rules:
+    - host: polaris-security.nl
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /django-admin/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /login-redirect/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /static/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+
+          - path: /auth/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+#          # OTA update bundle for the React Native staff app (expo-updates
+#          # clients poll {host}/mobile-updates/metadata.json).
+#          - path: /mobile-updates/
+#            pathType: Prefix
+#            backend:
+#              service:
+#                name: mobile
+#                port:
+#                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+    - host: vels.online
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /django-admin/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /login-redirect/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /static/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+
+          - path: /auth/
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+#          # OTA update bundle for the React Native staff app (expo-updates
+#          # clients poll {host}/mobile-updates/metadata.json).
+#          - path: /mobile-updates/
+#            pathType: Prefix
+#            backend:
+#              service:
+#                name: mobile
+#                port:
+#                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

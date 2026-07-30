@@ -1,0 +1,96 @@
+{{- if .Values.ollamaEmbed.enabled }}
+# Self-hosted Ollama for EMBEDDINGS ONLY (issue #657 semantic precedent-recall measurement).
+# Ollama Cloud (ollama.com) serves no embedding models, so the measurement needs a local
+# embedder. This is a standalone Deployment — deliberately NOT a backend sidecar — so the
+# request-serving backend stays schedulable anywhere while the GPU embedding work is pinned
+# to the one node with an NVIDIA card. Chat still runs on Ollama Cloud (configmap
+# OLLAMA_MODEL); only the measurement job targets this service, via a per-run
+# OLLAMA_BASE_URL=http://ollama-embed:11434 override.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-embed
+  labels:
+    app: ollama-embed
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: ollama-embed
+  template:
+    metadata:
+      labels:
+        app: ollama-embed
+    spec:
+      # Only {{ .Values.ollamaEmbed.nodeName }} has an NVIDIA card.
+      nodeSelector:
+        kubernetes.io/hostname: {{ .Values.ollamaEmbed.nodeName }}
+      {{- with .Values.ollamaEmbed.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
+      containers:
+        - name: ollama
+          image: {{ .Values.ollamaEmbed.image.repository }}:{{ .Values.ollamaEmbed.image.tag }}
+          # Start the server, wait until it answers, pull the embedding model once, then
+          # hand the foreground back to the server. Re-pull is a no-op once the model is in
+          # the mounted cache.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              pid=$!
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              # Fail the pod (CrashLoopBackOff) on a failed pull rather than serve without
+              # the model — a missing model would otherwise surface only as embed-time errors.
+              ollama pull "$OLLAMA_EMBED_MODEL" || { kill "$pid" 2>/dev/null; exit 1; }
+              wait "$pid"
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            - name: OLLAMA_EMBED_MODEL
+              value: {{ .Values.ollamaEmbed.model | quote }}
+          ports:
+            - containerPort: 11434
+          resources:
+            requests:
+              memory: {{ .Values.ollamaEmbed.memoryRequest | quote }}
+            {{- if gt (int .Values.ollamaEmbed.gpuCount) 0 }}
+            limits:
+              nvidia.com/gpu: {{ .Values.ollamaEmbed.gpuCount }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          {{- if .Values.ollamaEmbed.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: ollama-embed-models
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.ollamaEmbed.persistence.enabled }}
+---
+# Node-local (RWO) cache for pulled models so a restart doesn't re-download. Binds on
+# {{ .Values.ollamaEmbed.nodeName }} since the pod is pinned there.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-embed-models
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.ollamaEmbed.persistence.size }}
+  {{- with .Values.ollamaEmbed.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}

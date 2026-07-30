@@ -1,0 +1,34 @@
+{{- if .Values.monitoring.enabled }}
+# Internal-only Service for the backend metrics sidecar. Separate from the public
+# `backend` Service (port 8000) so the metrics port is never referenced by the Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-metrics
+  labels:
+    app: backend
+    {{- toYaml .Values.monitoring.selectorLabels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: metrics
+      port: {{ .Values.monitoring.metricsPort }}
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+  labels:
+    {{- toYaml .Values.monitoring.selectorLabels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+{{- end }}

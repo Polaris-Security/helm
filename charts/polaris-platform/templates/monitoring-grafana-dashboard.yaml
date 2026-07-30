@@ -1,0 +1,256 @@
+{{- if .Values.monitoring.enabled }}
+# Starter Grafana dashboard (ADR-0019) auto-discovered by the Grafana sidecar via the
+# label below. Covers API RED metrics, Celery task health/backlog and pod availability,
+# plus a dedicated Django (django-prometheus) section: request/response, latency,
+# exceptions, busiest/slowest views and body sizes.
+#
+# Every query is scoped to the release namespace via the hidden `$namespace` constant
+# so other Django apps elsewhere in the cluster never bleed into these panels. The
+# Prometheus Operator stamps a `namespace` label onto every ServiceMonitor/PodMonitor
+# target, which is what these matchers filter on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-dashboard
+  labels:
+    {{- toYaml .Values.monitoring.grafanaDashboardLabel | nindent 4 }}
+data:
+  polaris.json: |
+    {
+      "title": "Polaris Security — Platform Operations",
+      "uid": "polaris-ops",
+      "schemaVersion": 39,
+      "editable": true,
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {}
+          },
+          {
+            "name": "namespace",
+            "type": "constant",
+            "query": "{{ .Release.Namespace }}",
+            "current": { "value": "{{ .Release.Namespace }}", "text": "{{ .Release.Namespace }}" },
+            "hide": 2
+          }
+        ]
+      },
+      "panels": [
+        {
+          "title": "API request rate (RED)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\"}[5m])) by (status)",
+              "legendFormat": "{{`{{status}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "API error ratio (5xx)",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\"}[5m])), 1)"
+            }
+          ]
+        },
+        {
+          "title": "API latency p95 (s)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            }
+          ]
+        },
+        {
+          "title": "Celery task throughput",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(celery_task_succeeded_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "succeeded"
+            },
+            {
+              "expr": "sum(rate(celery_task_failed_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "failed"
+            },
+            {
+              "expr": "sum(rate(celery_task_retried_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "retried"
+            }
+          ]
+        },
+        {
+          "title": "Celery queue backlog",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(celery_queue_length{namespace=\"$namespace\"}) by (queue_name)",
+              "legendFormat": "{{`{{queue_name}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Pod restarts (15m)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[15m])) by (pod)",
+              "legendFormat": "{{`{{pod}}`}}"
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "title": "Django (django-prometheus)",
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+          "panels": []
+        },
+        {
+          "title": "Request rate by method",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_requests_total_by_method_total{namespace=\"$namespace\"}[5m])) by (method)",
+              "legendFormat": "{{`{{method}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Responses by status code",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\"}[5m])) by (status)",
+              "legendFormat": "{{`{{status}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Request latency incl. middleware (p50/p95/p99)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ]
+        },
+        {
+          "title": "Slowest views (p95 latency)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+          "targets": [
+            {
+              "expr": "topk(10, histogram_quantile(0.95, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{namespace=\"$namespace\"}[5m])) by (le, view)))",
+              "legendFormat": "{{`{{view}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Busiest views (request rate)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+          "targets": [
+            {
+              "expr": "topk(10, sum(rate(django_http_requests_total_by_view_transport_method_total{namespace=\"$namespace\"}[5m])) by (view))",
+              "legendFormat": "{{`{{view}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Exceptions by type",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_exceptions_total_by_type_total{namespace=\"$namespace\"}[5m])) by (type)",
+              "legendFormat": "{{`{{type}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Exceptions by view",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+          "targets": [
+            {
+              "expr": "topk(10, sum(rate(django_http_exceptions_total_by_view_total{namespace=\"$namespace\"}[5m])) by (view))",
+              "legendFormat": "{{`{{view}}`}}"
+            }
+          ]
+        },
+        {
+          "title": "Request / response body size (p95 bytes)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_body_total_bytes_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "request"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_responses_body_total_bytes_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "response"
+            }
+          ]
+        },
+        {
+          "title": "Streaming & AJAX response rate",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_streaming_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "streaming"
+            },
+            {
+              "expr": "sum(rate(django_http_ajax_requests_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "ajax"
+            }
+          ]
+        }
+      ]
+    }
+{{- end }}

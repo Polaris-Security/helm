@@ -1,0 +1,16 @@
+{{- if .Values.ollamaEmbed.enabled }}
+# Cluster-internal only — the measurement job (run inside the backend pod) reaches the
+# embedder at http://ollama-embed:11434. Never routed by the public Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-embed
+  labels:
+    app: ollama-embed
+spec:
+  selector:
+    app: ollama-embed
+  ports:
+    - port: 11434
+      targetPort: 11434
+{{- end }}

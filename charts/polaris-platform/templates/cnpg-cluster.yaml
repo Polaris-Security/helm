@@ -1,0 +1,124 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cluster-polaris
+spec:
+  instances: 2
+  storage:
+    storageClass: local-path
+    size: 10Gi
+
+  managed:
+    roles:
+      - name: polaris
+        superuser: true
+        login: true
+
+#  bootstrap:
+#    recovery:
+#      source: cluster-polaris
+#      database: polaris
+#      owner: polaris
+  bootstrap:
+    initdb:
+      database: polaris
+      owner: polaris
+
+  config:
+    parameters:
+      max_connections: 150
+
+
+  externalClusters:
+    - name: cluster-polaris
+      barmanObjectStore:
+        destinationPath: s3://vels-cnpg-backups/
+        endpointURL: https://s3.eu-central-1.wasabisys.com
+        s3Credentials:
+          accessKeyId:
+            name: minio
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: minio
+            key: ACCESS_SECRET_KEY
+        wal:
+          maxParallel: 8
+
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: minio-store
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cluster-polaris
+  labels:
+    prometheus: "true"
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: cluster-polaris
+  podMetricsEndpoints:
+  - port: metrics
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: minio-store
+spec:
+  retentionPolicy: "14d"
+  configuration:
+    destinationPath: s3://vels-cnpg-backups/
+    endpointURL: https://s3.eu-central-1.wasabisys.com
+    s3Credentials:
+      accessKeyId:
+        name: minio
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: minio
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: backup-polaris-db
+spec:
+  cluster:
+    name: cluster-polaris
+  schedule: '0 9 0 * * *'
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: minio
+spec:
+  refreshInterval: "120s"
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: minio
+    creationPolicy: Owner
+
+  data:
+    - secretKey: ACCESS_KEY_ID
+      remoteRef:
+        key: kv/polaris
+        property: ACCESS_KEY_ID
+
+    - secretKey: ACCESS_SECRET_KEY
+      remoteRef:
+        key: kv/polaris
+        property: ACCESS_SECRET_KEY

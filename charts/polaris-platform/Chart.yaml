@@ -1,0 +1,7 @@
+apiVersion: v2
+name: polaris
+version: 1.0.0
+dependencies:
+  - name: valkey
+    version: ">=1.0.0"
+    repository: "https://charts.bitnami.com/bitnami"

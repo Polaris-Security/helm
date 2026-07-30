@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      containers:
+        - name: celery-beat
+          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
+          imagePullPolicy: Always
+          command: ["celery", "-A", "config", "beat", "-l", "INFO"]
+          resources:
+            requests:
+              memory: "256Mi"
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cluster-polaris-app
+                  key: fqdn-uri
+            - name: ALLOWED_HOSTS
+              value: "vels.online"
+            - name: CSRF_TRUSTED_ORIGINS
+              value: "https://vels.online"
+            - name: DEBUG
+              value: "True"
+            # Distinguishes beat exceptions from web/worker exceptions in PostHog
+            # (ADR-0045); all three pods share the backend-config ConfigMap.
+            - name: RELEASE
+              value: {{ .Values.backend.image.tag | quote }}
+            - name: SERVICE_NAME
+              value: polaris-beat

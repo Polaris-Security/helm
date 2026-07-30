@@ -1,0 +1,82 @@
+backend:
+  image:
+    repository: docker.io/polarissecurity/backend
+    tag: 0.65.0
+frontend:
+  image:
+    repository: docker.io/polarissecurity/frontend
+    tag: 0.65.0
+# OTA update server for the React Native staff app (mobile/): serves the
+# exported Expo update bundle (iOS + Android Hermes bundles + metadata.json).
+mobile:
+  image:
+    repository: docker.io/polarissecurity/mobile
+    tag: 0.65.0
+# Docker Hub pull credentials for the private polarissecurity/* repositories.
+# Create with: kubectl create secret docker-registry registry-credentials \
+#   --docker-server=https://index.docker.io/v1/ --docker-username=<user> \
+#   --docker-password=<access-token>
+imagePullSecrets:
+  - name: registry-credentials
+# Exception + log telemetry (ADR-0045). The project token itself lives in Vault as
+# POSTHOG_API_KEY (kv/velsonline) and reaches the pods via the backend-secret
+# ExternalSecret — deliberately not here, so rotating it in Vault is sufficient. Only the
+# non-secret region endpoint is configurable from the chart.
+posthog:
+  host: https://eu.i.posthog.com
+# Self-hosted Ollama used ONLY for embeddings (issue #657 semantic precedent-recall
+# measurement) — Ollama Cloud serves no embedding models. A standalone Deployment (not a
+# backend sidecar) pinned to the GPU node keeps the backend schedulable anywhere; chat
+# stays on Ollama Cloud (configmap OLLAMA_MODEL). The measurement job targets this service
+# via a per-run OLLAMA_BASE_URL=http://ollama-embed:11434 override.
+ollamaEmbed:
+  enabled: true
+  nodeName: k3s01
+  # k3s auto-creates the "nvidia" RuntimeClass when the NVIDIA container runtime is present;
+  # set to "nvidia" if GPU pods need it explicitly on your cluster, else leave empty.
+  runtimeClassName: ""
+  gpuCount: 1
+  memoryRequest: "1Gi"
+  model: nomic-embed-text
+  image:
+    # Public image; mirror into a registry the cluster can reach if Docker Hub is unreachable.
+    repository: docker.io/ollama/ollama
+    tag: latest # pin to a released tag in production
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: "" # empty ⇒ cluster default (k3s local-path, node-local)
+# Operational observability (ADR-0019). Plugs into the cluster's existing Prometheus
+# Operator (kube-prometheus-stack) — we ship only the CRDs/dashboards/alerts, never the
+# stack itself. Gated so the chart still installs cleanly with monitoring disabled.
+monitoring:
+  enabled: true
+  # Dedicated metrics-aggregation port for the backend sidecar. Not routed by the Ingress.
+  metricsPort: 9808
+  # Labels the operator's Prometheus uses to discover our ServiceMonitor/PodMonitor and
+  # PrometheusRule. Matches the existing CNPG PodMonitor (prometheus: "true").
+  selectorLabels:
+    prometheus: "true"
+  # Label the Grafana sidecar watches to auto-load dashboard ConfigMaps.
+  grafanaDashboardLabel:
+    grafana_dashboard: "1"
+  celeryExporter:
+    image: ghcr.io/danihodovic/celery-exporter:0.12.2
+    port: 9808
+valkey:
+  architecture: standalone
+  auth:
+    enabled: true
+    existingSecret: "valkey-secret"
+    existingSecretPasswordKey: "valkey-password"
+  primary:
+    persistence:
+      enabled: false
+  # Reuse the off-the-shelf Valkey metrics exporter and let the operator scrape it
+  # (ADR-0019). The ServiceMonitor carries the operator's discovery label.
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      labels:
+        prometheus: "true"

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  DEBUG: "False"
+  EMAIL_SSL_NO_VERIFY: "True"
+  BUNKERWEB_PUBLIC_FQDN: proxy.vels.online
+  SEMAPHORE_PROJECT_ID: "1"
+  AUTHENTIK_ENROLLMENT_FLOW_SLUG: default-enrollment-flow
+
+  # gpt-oss reliably emits OpenAI-style tool_calls (gemma does not), which the
+  # assistant agentic loop (ADR-0011) depends on. Ollama Cloud, tool + web-search capable.
+  OLLAMA_MODEL: gpt-oss:120b-cloud
+  INBOUND_IMAP_HOST: mail.vels.online
+  ONCALL_ROUTING: llm_guided
+  ALLOWED_HOSTS: "vels.online,backend.polaris.svc.cluster.local,polaris-security.nl"
+
+  # Exception + log telemetry to PostHog EU (ADR-0045). ENVIRONMENT is the only reliable
+  # prod/dev discriminator — DEBUG is "True" on the Deployments by design, so it cannot
+  # serve as one. POSTHOG_API_KEY is deliberately NOT here — it comes from Vault via the
+  # backend-secret ExternalSecret. Adding it here would silently win, because this
+  # ConfigMap is listed after the secretRef in each Deployment's envFrom.
+  ENVIRONMENT: production
+  POSTHOG_HOST: {{ .Values.posthog.host | quote }}
+  # PostHog Logs bills per record; WARNING keeps the useful breadcrumbs without shipping
+  # every task-progress INFO line. The console handler still emits at LOG_LEVEL.
+  POSTHOG_LOGS_ENABLED: "True"
+  POSTHOG_LOG_LEVEL: WARNING
+  LOG_LEVEL: INFO
+
+  EXCEPTION_LLM_PROVIDER: exceptions.llm.ollama.OllamaProvider
+  TRIAGE_LLM_PROVIDER: incidents.llm.ollama.OllamaTriageProvider
+  CORRELATION_LLM_PROVIDER: correlations.llm.ollama.OllamaDraftProvider
+  CLOSURE_LLM_PROVIDER: incidents.llm.ollama.OllamaTriageProvider
+  INCIDENT_ASSISTANT_LLM_PROVIDER: incidents.llm.ollama.OllamaTriageProvider
+  # Triage Lesson distillation sweep (ADR-0030) — a low-volume batch reasoning job; can be
+  # pointed at a stronger model than per-alert classify.
+  DISTILL_LLM_PROVIDER: incidents.llm.ollama.OllamaTriageProvider
