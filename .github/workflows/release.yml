@@ -13,6 +13,9 @@ on:
   push:
     branches:
       - main
+  # Manual re-run, for when a release needs redoing without a source change — or when a
+  # push was skipped because its commit message contained a skip-CI token.
+  workflow_dispatch:
 
 # Never release two versions at once: the job pushes a version bump back to main and
 # rewrites the index on gh-pages, both of which race badly.
