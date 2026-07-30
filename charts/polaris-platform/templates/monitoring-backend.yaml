@@ -7,6 +7,7 @@ metadata:
   name: backend-metrics
   labels:
     app: backend
+    component: metrics
     {{- toYaml .Values.monitoring.selectorLabels | nindent 4 }}
 spec:
   type: ClusterIP
@@ -24,11 +25,13 @@ metadata:
   labels:
     {{- toYaml .Values.monitoring.selectorLabels | nindent 4 }}
 spec:
+  # Matches backend-metrics only, not the public `backend` Service which shares app=backend.
   selector:
     matchLabels:
       app: backend
+      component: metrics
   endpoints:
     - port: metrics
       path: /metrics
-      interval: 30s
+      interval: {{ .Values.monitoring.scrapeInterval }}
 {{- end }}

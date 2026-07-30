@@ -1,4 +1,5 @@
-{{- if .Values.monitoring.enabled }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.alerts.enabled }}
+{{- $a := .Values.monitoring.alerts }}
 # Operational alerts (ADR-0019) for the operator's existing Alertmanager. We ship only
 # the rules; receivers/routing are assumed already configured on the operator.
 apiVersion: monitoring.coreos.com/v1
@@ -13,49 +14,49 @@ spec:
       rules:
         - alert: BackendMetricsDown
           expr: up{service="backend-metrics"} == 0
-          for: 5m
+          for: {{ $a.backendMetricsDownFor }}
           labels:
             severity: critical
           annotations:
             summary: "Backend metrics endpoint is down"
-            description: "Prometheus cannot scrape the backend metrics sidecar for 5m; the web tier may be down."
+            description: "Prometheus cannot scrape the backend metrics sidecar for {{ $a.backendMetricsDownFor }}; the web tier may be down."
         - alert: BackendHigh5xxRate
           expr: |
             sum(rate(django_http_responses_total_by_status_total{status=~"5.."}[5m]))
-              / sum(rate(django_http_responses_total_by_status_total[5m])) > 0.05
-          for: 10m
+              / sum(rate(django_http_responses_total_by_status_total[5m])) > {{ $a.high5xxRatio }}
+          for: {{ $a.high5xxFor }}
           labels:
             severity: warning
           annotations:
             summary: "High 5xx error rate on the API"
-            description: "More than 5% of HTTP responses are 5xx over the last 10m."
+            description: "More than {{ mulf $a.high5xxRatio 100 }}% of HTTP responses are 5xx over the last {{ $a.high5xxFor }}."
     - name: polaris.celery
       rules:
         - alert: CeleryTaskBacklog
-          expr: sum(celery_queue_length) > 100
-          for: 15m
+          expr: sum(celery_queue_length) > {{ $a.celeryBacklogThreshold }}
+          for: {{ $a.celeryBacklogFor }}
           labels:
             severity: warning
           annotations:
             summary: "Celery queue backlog is growing"
-            description: "More than 100 tasks have been queued for over 15m; workers may not be keeping up."
+            description: "More than {{ $a.celeryBacklogThreshold }} tasks have been queued for over {{ $a.celeryBacklogFor }}; workers may not be keeping up."
         - alert: CeleryHighFailureRate
           expr: |
             sum(rate(celery_task_failed_total[10m]))
-              / clamp_min(sum(rate(celery_task_received_total[10m])), 1) > 0.1
-          for: 10m
+              / clamp_min(sum(rate(celery_task_received_total[10m])), 1) > {{ $a.celeryFailureRatio }}
+          for: {{ $a.celeryFailureFor }}
           labels:
             severity: warning
           annotations:
             summary: "High Celery task failure rate"
-            description: "More than 10% of Celery tasks have failed over the last 10m."
+            description: "More than {{ mulf $a.celeryFailureRatio 100 }}% of Celery tasks have failed over the last {{ $a.celeryFailureFor }}."
     - name: polaris.platform
       rules:
         - alert: PodCrashLooping
           expr: |
             rate(kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}"}[15m]) > 0
             and on() kube_pod_container_status_waiting_reason{namespace="{{ .Release.Namespace }}",reason="CrashLoopBackOff"} == 1
-          for: 10m
+          for: {{ $a.crashLoopFor }}
           labels:
             severity: critical
           annotations:

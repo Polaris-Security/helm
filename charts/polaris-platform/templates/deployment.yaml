@@ -2,11 +2,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
+  {{- with .Values.backend.web.annotations }}
   annotations:
-    configmap.reloader.stakater.com/reload: "backend-config"
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  replicas: 1
-  revisionHistoryLimit: 2
+  replicas: {{ .Values.backend.web.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       app: backend
@@ -14,54 +16,40 @@ spec:
     metadata:
       labels:
         app: backend
+      {{- with .Values.backend.web.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
-      resources:
-        requests:
-          memory: "512Mi"
-      imagePullSecrets:
-        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.backend.web) | trim) }}
+      {{- nindent 6 . }}
+      {{- end }}
       initContainers:
         - name: migrate
-          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
+          image: {{ include "polaris.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["python", "manage.py", "migrate", "--noinput"]
           envFrom:
             - secretRef:
-                name: backend-secret
+                name: {{ include "polaris.backendSecretName" . }}
             - configMapRef:
                 name: backend-config
-
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: cluster-polaris-app
-                  key: fqdn-uri
-
-            - name: CSRF_TRUSTED_ORIGINS
-              value: "https://vels.online"
-
+            {{- include "polaris.backendEnv" . | nindent 12 }}
       containers:
         - name: backend
-          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
-          imagePullPolicy: Always
+          image: {{ include "polaris.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           ports:
-            - containerPort: 8000
+            - name: http
+              containerPort: 8000
           envFrom:
             - secretRef:
-                name: backend-secret
+                name: {{ include "polaris.backendSecretName" . }}
             - configMapRef:
                 name: backend-config
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: cluster-polaris-app
-                  key: fqdn-uri
-
-            - name: CSRF_TRUSTED_ORIGINS
-              value: "https://vels.online"
-            - name: DEBUG
-              value: "False"
+            {{- include "polaris.backendEnv" . | nindent 12 }}
             # Tags PostHog events with the deployed release, and separates the web pod
             # from the worker/beat pods that share this ConfigMap (ADR-0045).
             - name: RELEASE
@@ -74,14 +62,33 @@ spec:
             # (ADR-0019). Deliberately not exposed on the Ingress-routed port 8000.
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus-multiproc
+            {{- end }}
+            {{- with .Values.backend.web.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.backend.web.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.backend.web.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.backend.web.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.monitoring.enabled }}
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+          {{- end }}
+        {{- if .Values.monitoring.enabled }}
         # Aggregating metrics endpoint on a dedicated port the public Ingress never
         # routes to; only the in-cluster Prometheus scraper reaches it.
         - name: metrics-exporter
-          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
-          imagePullPolicy: Always
+          image: {{ include "polaris.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["python", "metrics_exporter.py"]
           ports:
             - name: metrics
@@ -94,7 +101,9 @@ spec:
           volumeMounts:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
+        {{- end }}
+      {{- if .Values.monitoring.enabled }}
       volumes:
         - name: prometheus-multiproc
           emptyDir: {}
-            {{- end }}
+      {{- end }}

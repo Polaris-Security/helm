@@ -2,9 +2,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: celery-worker
+  {{- with .Values.backend.worker.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  replicas: 1
-  revisionHistoryLimit: 2
+  replicas: {{ .Values.backend.worker.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       app: celery-worker
@@ -12,39 +16,36 @@ spec:
     metadata:
       labels:
         app: celery-worker
+      {{- with .Values.backend.worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
-      imagePullSecrets:
-        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.backend.worker) | trim) }}
+      {{- nindent 6 . }}
+      {{- end }}
       containers:
         - name: celery-worker
-          image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
-          imagePullPolicy: Always
+          image: {{ include "polaris.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["celery", "-A", "config", "worker", "-l", "INFO"]
+          {{- with .Values.backend.worker.resources }}
           resources:
-            requests:
-              memory: "1024Mi"
-            limits:
-              memory: "2048Mi"
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           envFrom:
             - secretRef:
-                name: backend-secret
+                name: {{ include "polaris.backendSecretName" . }}
             - configMapRef:
                 name: backend-config
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: cluster-polaris-app
-                  key: fqdn-uri
-            - name: ALLOWED_HOSTS
-              value: "vels.online"
-            - name: CSRF_TRUSTED_ORIGINS
-              value: "https://vels.online"
-            - name: DEBUG
-              value: "True"
+            {{- include "polaris.backendEnv" . | nindent 12 }}
             # Distinguishes worker exceptions from web exceptions in PostHog (ADR-0045);
             # both pods share the backend-config ConfigMap.
             - name: RELEASE
               value: {{ .Values.backend.image.tag | quote }}
             - name: SERVICE_NAME
               value: polaris-worker
+            {{- with .Values.backend.worker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}

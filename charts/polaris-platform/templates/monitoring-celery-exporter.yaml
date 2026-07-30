@@ -1,4 +1,4 @@
-{{- if .Values.monitoring.enabled }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.celeryExporter.enabled }}
 # Off-the-shelf celery-exporter (ADR-0019): consumes task events from the Valkey
 # broker and exposes throughput/failure/retry/queue-depth metrics. No worker-side
 # instrumentation — the workers just emit task events (CELERY_*_SEND_*_EVENT settings).
@@ -8,7 +8,7 @@ metadata:
   name: celery-exporter
 spec:
   replicas: 1
-  revisionHistoryLimit: 2
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       app: celery-exporter
@@ -17,8 +17,9 @@ spec:
       labels:
         app: celery-exporter
     spec:
-      imagePullSecrets:
-        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- with (include "polaris.podSpec" (dict "root" . "component" dict) | trim) }}
+      {{- nindent 6 . }}
+      {{- end }}
       containers:
         - name: celery-exporter
           image: {{ .Values.monitoring.celeryExporter.image }}
@@ -30,13 +31,14 @@ spec:
             - name: CE_BROKER_URL
               valueFrom:
                 secretKeyRef:
-                  name: backend-secret
+                  name: {{ include "polaris.backendSecretName" . }}
                   key: REDIS_URL
             - name: CE_PORT
               value: {{ .Values.monitoring.celeryExporter.port | quote }}
+          {{- with .Values.monitoring.celeryExporter.resources }}
           resources:
-            requests:
-              memory: "128Mi"
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -67,5 +69,5 @@ spec:
   endpoints:
     - port: metrics
       path: /metrics
-      interval: 30s
+      interval: {{ .Values.monitoring.scrapeInterval }}
 {{- end }}

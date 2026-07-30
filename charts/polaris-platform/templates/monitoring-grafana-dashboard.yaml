@@ -1,4 +1,4 @@
-{{- if .Values.monitoring.enabled }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.dashboard.enabled }}
 # Starter Grafana dashboard (ADR-0019) auto-discovered by the Grafana sidecar via the
 # label below. Covers API RED metrics, Celery task health/backlog and pod availability,
 # plus a dedicated Django (django-prometheus) section: request/response, latency,

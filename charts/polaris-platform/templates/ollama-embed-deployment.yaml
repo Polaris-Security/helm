@@ -2,10 +2,10 @@
 # Self-hosted Ollama for EMBEDDINGS ONLY (issue #657 semantic precedent-recall measurement).
 # Ollama Cloud (ollama.com) serves no embedding models, so the measurement needs a local
 # embedder. This is a standalone Deployment — deliberately NOT a backend sidecar — so the
-# request-serving backend stays schedulable anywhere while the GPU embedding work is pinned
-# to the one node with an NVIDIA card. Chat still runs on Ollama Cloud (configmap
-# OLLAMA_MODEL); only the measurement job targets this service, via a per-run
-# OLLAMA_BASE_URL=http://ollama-embed:11434 override.
+# request-serving backend stays schedulable anywhere while the GPU embedding work can be
+# pinned to a node with an NVIDIA card. Chat still runs on Ollama Cloud
+# (backend.config.OLLAMA_MODEL); only the measurement job targets this service, via a
+# per-run OLLAMA_BASE_URL=http://ollama-embed:11434 override.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,7 +14,7 @@ metadata:
     app: ollama-embed
 spec:
   replicas: 1
-  revisionHistoryLimit: 2
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       app: ollama-embed
@@ -23,15 +23,31 @@ spec:
       labels:
         app: ollama-embed
     spec:
-      # Only {{ .Values.ollamaEmbed.nodeName }} has an NVIDIA card.
+      {{- if .Values.ollamaEmbed.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.ollamaEmbed.nodeSelector | nindent 8 }}
+      {{- else if .Values.ollamaEmbed.nodeName }}
+      # Pinned to the one node with an NVIDIA card.
       nodeSelector:
         kubernetes.io/hostname: {{ .Values.ollamaEmbed.nodeName }}
+      {{- end }}
+      {{- with .Values.ollamaEmbed.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollamaEmbed.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.ollamaEmbed.runtimeClassName }}
       runtimeClassName: {{ . }}
       {{- end }}
       containers:
         - name: ollama
           image: {{ .Values.ollamaEmbed.image.repository }}:{{ .Values.ollamaEmbed.image.tag }}
+          {{- with .Values.ollamaEmbed.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
           # Start the server, wait until it answers, pull the embedding model once, then
           # hand the foreground back to the server. Re-pull is a no-op once the model is in
           # the mounted cache.
@@ -51,7 +67,8 @@ spec:
             - name: OLLAMA_EMBED_MODEL
               value: {{ .Values.ollamaEmbed.model | quote }}
           ports:
-            - containerPort: 11434
+            - name: http
+              containerPort: 11434
           resources:
             requests:
               memory: {{ .Values.ollamaEmbed.memoryRequest | quote }}
@@ -79,7 +96,7 @@ spec:
 {{- if .Values.ollamaEmbed.persistence.enabled }}
 ---
 # Node-local (RWO) cache for pulled models so a restart doesn't re-download. Binds on
-# {{ .Values.ollamaEmbed.nodeName }} since the pod is pinned there.
+# whichever node the pod is scheduled to.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

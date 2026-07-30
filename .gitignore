@@ -1,0 +1,8 @@
+.DS_Store
+.idea/
+.vscode/
+
+# Fetched by `helm dependency update`; the pinned versions in Chart.yaml and Chart.lock
+# are the source of truth.
+charts/*/charts/
+charts/*/*.tgz

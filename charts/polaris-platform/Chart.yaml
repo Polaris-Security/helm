@@ -1,7 +1,29 @@
 apiVersion: v2
 name: polaris
-version: 1.0.0
+description: >-
+  Polaris Security platform — Django/Celery backend, SPA frontend and the supporting
+  Postgres, Valkey, embedding and observability components.
+type: application
+# Chart version. Bump on every chart change.
+version: 1.1.0
+# Version of the Polaris platform this chart defaults to deploying.
+appVersion: "0.65.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/Polaris-Security/polaris-helm
+sources:
+  - https://github.com/Polaris-Security/polaris-helm
+keywords:
+  - security
+  - incident-response
+  - django
+  - celery
+maintainers:
+  - name: Eddie Vels
+    email: eddie@vels.online
 dependencies:
+  # Celery broker and cache. Pinned rather than floating: the previous ">=1.0.0"
+  # constraint silently resolved to whatever was newest at `helm dependency update` time.
   - name: valkey
-    version: ">=1.0.0"
+    version: 6.2.4
     repository: "https://charts.bitnami.com/bitnami"
+    condition: valkey.enabled

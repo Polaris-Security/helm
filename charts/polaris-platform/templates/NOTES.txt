@@ -1,0 +1,54 @@
+Polaris {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Backend image: {{ include "polaris.backendImage" . }}
+Frontend image: {{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}
+
+Prerequisites this chart expects to already exist:
+
+  1. Secret "{{ include "polaris.backendSecretName" . }}" — the backend environment.
+     Check it is present and contains REDIS_URL:
+       kubectl -n {{ .Release.Namespace }} get secret {{ include "polaris.backendSecretName" . }}
+
+  2. Secret "{{ include "polaris.databaseSecretName" . }}" (key "{{ .Values.postgres.urlSecret.key }}") — the Postgres URI.
+{{- if .Values.postgres.enabled }}
+     CloudNativePG creates this for you once the Cluster is ready:
+       kubectl -n {{ .Release.Namespace }} get cluster {{ .Values.postgres.cluster.name }}
+{{- else }}
+     postgres.enabled is false, so you must provide this Secret yourself.
+{{- end }}
+{{- if .Values.valkey.enabled }}
+
+  3. Secret "{{ .Values.valkey.auth.existingSecret }}" (key "{{ .Values.valkey.auth.existingSecretPasswordKey }}") — the Valkey password,
+     which must match the credentials in REDIS_URL.
+{{- end }}
+{{- with .Values.imagePullSecrets }}
+
+  4. Image pull secret(s): {{ range $i, $s := . }}{{ if $i }}, {{ end }}{{ $s.name }}{{ end }}
+
+{{- end }}
+
+Watch the rollout:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/backend
+
+{{ if .Values.ingress.enabled -}}
+Reachable at:
+{{- range .Values.ingress.hosts }}
+  https://{{ . }}
+{{- end }}
+{{- if not .Values.ingress.tls.secretName }}
+
+  ingress.tls.secretName is empty, so the "{{ .Values.ingress.className }}" controller must supply the
+  certificate itself. Set it if you terminate TLS with a cert-manager Secret.
+{{- end }}
+{{- else -}}
+Ingress is disabled — reach the app by port-forwarding:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/frontend 8080:{{ .Values.frontend.service.port }}
+{{- end }}
+
+{{- if not .Values.monitoring.enabled }}
+
+Monitoring is disabled: no ServiceMonitor, PrometheusRule or Grafana dashboard is
+installed, and the backend runs without its metrics sidecar.
+{{- end }}

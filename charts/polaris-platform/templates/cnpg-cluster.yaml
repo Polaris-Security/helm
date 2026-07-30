@@ -1,90 +1,108 @@
----
+{{- if .Values.postgres.enabled }}
+# PostgreSQL provisioned by the CloudNativePG operator, which must already be installed
+# in the cluster. Set postgres.enabled=false to bring your own database instead — then
+# postgres.urlSecret must name a Secret holding a connection URI.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: cluster-polaris
+  name: {{ .Values.postgres.cluster.name }}
 spec:
-  instances: 2
+  instances: {{ .Values.postgres.cluster.instances }}
   storage:
-    storageClass: local-path
-    size: 10Gi
+    size: {{ .Values.postgres.cluster.storage.size }}
+    {{- with .Values.postgres.cluster.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
 
+  {{- with .Values.postgres.cluster.managedRoles }}
   managed:
     roles:
-      - name: polaris
-        superuser: true
-        login: true
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
 
-#  bootstrap:
-#    recovery:
-#      source: cluster-polaris
-#      database: polaris
-#      owner: polaris
   bootstrap:
     initdb:
-      database: polaris
-      owner: polaris
+      database: {{ .Values.postgres.cluster.database }}
+      owner: {{ .Values.postgres.cluster.owner }}
 
-  config:
+  {{- with .Values.postgres.cluster.parameters }}
+  postgresql:
     parameters:
-      max_connections: 150
+      {{- toYaml . | nindent 6 }}
+  {{- end }}
 
+  {{- with .Values.postgres.cluster.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.postgres.cluster.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.postgres.cluster.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 
+  {{- if .Values.postgres.backup.enabled }}
+  # Recovery source: lets a fresh Cluster be bootstrapped from the object store by
+  # switching bootstrap above to `recovery`.
   externalClusters:
-    - name: cluster-polaris
+    - name: {{ .Values.postgres.cluster.name }}
       barmanObjectStore:
-        destinationPath: s3://vels-cnpg-backups/
-        endpointURL: https://s3.eu-central-1.wasabisys.com
+        destinationPath: {{ .Values.postgres.backup.destinationPath | quote }}
+        endpointURL: {{ .Values.postgres.backup.endpointURL | quote }}
         s3Credentials:
           accessKeyId:
-            name: minio
-            key: ACCESS_KEY_ID
+            name: {{ .Values.postgres.backup.credentialsSecret.name }}
+            key: {{ .Values.postgres.backup.credentialsSecret.accessKeyIdKey }}
           secretAccessKey:
-            name: minio
-            key: ACCESS_SECRET_KEY
+            name: {{ .Values.postgres.backup.credentialsSecret.name }}
+            key: {{ .Values.postgres.backup.credentialsSecret.secretAccessKeyKey }}
         wal:
-          maxParallel: 8
-
+          maxParallel: {{ .Values.postgres.backup.walMaxParallel }}
 
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
       parameters:
-        barmanObjectName: minio-store
-
+        barmanObjectName: {{ .Values.postgres.backup.objectStoreName }}
+  {{- end }}
+{{- if .Values.monitoring.enabled }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
-  name: cluster-polaris
+  name: {{ .Values.postgres.cluster.name }}
   labels:
-    prometheus: "true"
+    {{- toYaml .Values.monitoring.selectorLabels | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      cnpg.io/cluster: cluster-polaris
+      cnpg.io/cluster: {{ .Values.postgres.cluster.name }}
   podMetricsEndpoints:
-  - port: metrics
+    - port: metrics
+{{- end }}
+{{- if .Values.postgres.backup.enabled }}
 ---
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
-  name: minio-store
+  name: {{ .Values.postgres.backup.objectStoreName }}
 spec:
-  retentionPolicy: "14d"
+  retentionPolicy: {{ .Values.postgres.backup.retentionPolicy | quote }}
   configuration:
-    destinationPath: s3://vels-cnpg-backups/
-    endpointURL: https://s3.eu-central-1.wasabisys.com
+    destinationPath: {{ .Values.postgres.backup.destinationPath | quote }}
+    endpointURL: {{ .Values.postgres.backup.endpointURL | quote }}
     s3Credentials:
       accessKeyId:
-        name: minio
-        key: ACCESS_KEY_ID
+        name: {{ .Values.postgres.backup.credentialsSecret.name }}
+        key: {{ .Values.postgres.backup.credentialsSecret.accessKeyIdKey }}
       secretAccessKey:
-        name: minio
-        key: ACCESS_SECRET_KEY
+        name: {{ .Values.postgres.backup.credentialsSecret.name }}
+        key: {{ .Values.postgres.backup.credentialsSecret.secretAccessKeyKey }}
     wal:
-      compression: gzip
-
+      compression: {{ .Values.postgres.backup.walCompression }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
@@ -92,33 +110,11 @@ metadata:
   name: backup-polaris-db
 spec:
   cluster:
-    name: cluster-polaris
-  schedule: '0 9 0 * * *'
+    name: {{ .Values.postgres.cluster.name }}
+  schedule: {{ .Values.postgres.backup.schedule | quote }}
   backupOwnerReference: self
   method: plugin
   pluginConfiguration:
     name: barman-cloud.cloudnative-pg.io
----
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: minio
-spec:
-  refreshInterval: "120s"
-  secretStoreRef:
-    name: vault-backend
-    kind: SecretStore
-  target:
-    name: minio
-    creationPolicy: Owner
-
-  data:
-    - secretKey: ACCESS_KEY_ID
-      remoteRef:
-        key: kv/polaris
-        property: ACCESS_KEY_ID
-
-    - secretKey: ACCESS_SECRET_KEY
-      remoteRef:
-        key: kv/polaris
-        property: ACCESS_SECRET_KEY
+{{- end }}
+{{- end }}

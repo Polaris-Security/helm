@@ -1,134 +1,64 @@
+{{- if .Values.ingress.enabled }}
+{{- if not .Values.ingress.hosts }}
+{{- fail "ingress.enabled is true but ingress.hosts is empty — set at least one hostname" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: polaris
+  {{- with .Values.ingress.annotations }}
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    # SSE buffering: the streaming endpoint sets X-Accel-Buffering: no on its response,
-    # which nginx honours per-response without requiring a blanket proxy_buffering off.
-    # Non-streaming endpoints retain default buffering. See ADR-0014.
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  ingressClassName: bunkerweb
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
-        - vels.online
-        - polaris-security.nl
-      #secretName: polaris-tls
-
+        {{- range .Values.ingress.hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- with .Values.ingress.tls.secretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
   rules:
-    - host: polaris-security.nl
+    {{- range $host := .Values.ingress.hosts }}
+    - host: {{ $host | quote }}
       http:
         paths:
-          - path: /api/
+          {{- range $path := $.Values.ingress.backendPaths }}
+          - path: {{ $path | quote }}
             pathType: Prefix
             backend:
               service:
                 name: backend
                 port:
-                  number: 8000
-          - path: /django-admin/
+                  number: {{ $.Values.backend.service.port }}
+          {{- end }}
+          {{- if $.Values.ingress.mobileUpdates.enabled }}
+          # OTA update bundle for the React Native staff app (expo-updates clients poll
+          # {host}/mobile-updates/metadata.json).
+          - path: {{ $.Values.ingress.mobileUpdates.path | quote }}
             pathType: Prefix
             backend:
               service:
-                name: backend
+                name: {{ $.Values.ingress.mobileUpdates.serviceName }}
                 port:
-                  number: 8000
-
-          - path: /login-redirect/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-
-          - path: /static/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-
-
-          - path: /auth/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-#          # OTA update bundle for the React Native staff app (expo-updates
-#          # clients poll {host}/mobile-updates/metadata.json).
-#          - path: /mobile-updates/
-#            pathType: Prefix
-#            backend:
-#              service:
-#                name: mobile
-#                port:
-#                  number: 80
+                  number: {{ $.Values.ingress.mobileUpdates.servicePort }}
+          {{- end }}
+          # Catch-all: anything not claimed above is the single-page app.
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: frontend
                 port:
-                  number: 80
-
-    - host: vels.online
-      http:
-        paths:
-          - path: /api/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-          - path: /django-admin/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-
-          - path: /login-redirect/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-
-          - path: /static/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-
-          - path: /auth/
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-#          # OTA update bundle for the React Native staff app (expo-updates
-#          # clients poll {host}/mobile-updates/metadata.json).
-#          - path: /mobile-updates/
-#            pathType: Prefix
-#            backend:
-#              service:
-#                name: mobile
-#                port:
-#                  number: 80
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: frontend
-                port:
-                  number: 80
+                  number: {{ $.Values.frontend.service.port }}
+    {{- end }}
+    {{- with .Values.ingress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
