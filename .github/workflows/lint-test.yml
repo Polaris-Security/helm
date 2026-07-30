@@ -1,0 +1,82 @@
+name: Lint and test chart
+
+# Runs on every push and pull request. The release workflow depends on this job
+# passing, so a chart that does not render never reaches the Helm repository.
+on:
+  push:
+    # main is covered by the release workflow, which calls this one before publishing;
+    # gh-pages holds the built index, not the chart source.
+    branches-ignore:
+      - main
+      - gh-pages
+  pull_request:
+  workflow_call:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Fetch chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          # `build` rather than `update`: it installs exactly what Chart.lock pins and
+          # fails if the lock has drifted from Chart.yaml.
+          helm dependency build charts/polaris-platform
+
+      - name: helm lint
+        run: |
+          helm lint charts/polaris-platform
+          for f in charts/polaris-platform/ci/*-values.yaml; do
+            echo "::group::helm lint -f $f"
+            helm lint charts/polaris-platform -f "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Render and validate against Kubernetes schemas
+        run: |
+          set -euo pipefail
+          # Defaults plus each CI override file. Chart-managed CRDs (CloudNativePG,
+          # Prometheus Operator, external-secrets) have no published schema here, so
+          # they are skipped rather than failing the build.
+          render() {
+            local name="$1"; shift
+            echo "::group::$name"
+            helm template polaris charts/polaris-platform --namespace polaris "$@" \
+              | kubeconform -strict -summary -kubernetes-version 1.29.0 -ignore-missing-schemas
+            echo "::endgroup::"
+          }
+          render defaults
+          for f in charts/polaris-platform/ci/*-values.yaml; do
+            render "$(basename "$f")" -f "$f"
+          done
+
+      - name: Check required values are enforced
+        run: |
+          set -uo pipefail
+          # Each of these must fail the render with a readable message rather than
+          # producing a manifest with an empty reference in it.
+          expect_failure() {
+            local description="$1"; shift
+            if helm template polaris charts/polaris-platform "$@" >/dev/null 2>&1; then
+              echo "::error::expected '$description' to fail the render, but it succeeded"
+              exit 1
+            fi
+            echo "ok: $description is rejected"
+          }
+          expect_failure "blank backend.existingSecret" --set backend.existingSecret=
+          expect_failure "ingress enabled with no hosts" --set ingress.hosts=null
+          expect_failure "missing backend image tag"     --set backend.image.tag=null
+          expect_failure "postgres disabled without urlSecret.name" --set postgres.enabled=false

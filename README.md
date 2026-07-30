@@ -55,7 +55,17 @@ kubectl create secret generic backend-secret --from-env-file=.env
 # Valkey password, read by the subchart. Must match the credentials inside REDIS_URL.
 kubectl create secret generic valkey-secret --from-literal=valkey-password=<password>
 
-helm dependency update charts/polaris-platform
+# Add the chart repository and install
+helm repo add polaris https://polaris-security.github.io/helm
+helm repo update
+helm upgrade --install polaris polaris/polaris -f my-values.yaml
+```
+
+`helm search repo polaris --versions` lists the available chart versions; pass
+`--version` to pin one. To work from a checkout of this repository instead:
+
+```sh
+helm dependency build charts/polaris-platform
 helm upgrade --install polaris charts/polaris-platform -f my-values.yaml
 ```
 
@@ -90,9 +100,31 @@ Before a first install, review at least:
 ## Development
 
 ```sh
+helm dependency build charts/polaris-platform
 helm lint charts/polaris-platform
 helm template polaris charts/polaris-platform -f my-values.yaml
 ```
+
+`charts/polaris-platform/ci/*-values.yaml` hold the configurations CI renders on every
+push: `minimal-values.yaml` (every optional dependency disabled, external database) and
+`full-values.yaml` (multi-host Ingress, external-secrets, per-component scheduling).
+Add a case there when you add a value that changes what gets rendered.
+
+## Releasing
+
+Every push to `main` publishes the chart:
+
+1. `.github/workflows/lint-test.yml` lints the chart, renders the default and CI values,
+   validates the output against Kubernetes schemas with `kubeconform`, and asserts the
+   required-value guards still fail loudly.
+2. `.github/workflows/release.yml` then bumps the chart version, packages the chart with
+   its subchart, attaches it to a GitHub Release, and updates the `index.yaml` served
+   from the `gh-pages` branch.
+
+The patch version is bumped automatically when the version in `Chart.yaml` has already
+been released. For a minor or major release, edit `version:` in `Chart.yaml` yourself —
+an unreleased version is used as-is. `appVersion` tracks the Polaris platform release
+and is not touched by CI; bump it with the image tags.
 
 ## License
 

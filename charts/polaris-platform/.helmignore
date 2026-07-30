@@ -1,5 +1,7 @@
 .DS_Store
 .git/
+# CI-only override files; not part of the released chart.
+ci/
 .gitignore
 *.tmproj
 .idea/

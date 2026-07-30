@@ -1,0 +1,22 @@
+# CI case: every optional dependency disabled. Proves the chart installs with no
+# operators present (no CNPG, no Prometheus Operator, no external-secrets, no GPU node)
+# and with a database you manage yourself.
+monitoring:
+  enabled: false
+ollamaEmbed:
+  enabled: false
+ingress:
+  enabled: false
+valkey:
+  enabled: false
+imagePullSecrets: []
+postgres:
+  enabled: false
+  urlSecret:
+    name: my-external-db
+    key: uri
+backend:
+  allowedHosts:
+    - polaris.internal
+  csrfTrustedOrigins:
+    - https://polaris.internal

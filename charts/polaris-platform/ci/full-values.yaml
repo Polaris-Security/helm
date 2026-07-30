@@ -1,0 +1,57 @@
+# CI case: everything enabled and overridden away from the defaults. Exercises the
+# multi-host Ingress loop, the external-secrets objects, per-component scheduling and
+# probes, a renamed Postgres cluster (so DATABASE_URL has to follow it) and CPU-only
+# embedding.
+ingress:
+  className: nginx
+  hosts:
+    - polaris.acme.test
+    - alerts.acme.test
+  tls:
+    secretName: polaris-tls
+  mobileUpdates:
+    enabled: true
+
+externalSecrets:
+  secretStore:
+    enabled: true
+    vault:
+      server: https://vault.acme.test:8200
+      auth:
+        kubernetes:
+          role: polaris-role
+  backupCredentials:
+    enabled: true
+    remoteKey: kv/acme
+
+backend:
+  extraConfig:
+    LOG_LEVEL: DEBUG
+    CUSTOM_FLAG: "yes"
+  web:
+    replicaCount: 3
+    readinessProbe:
+      httpGet:
+        path: /api/health/
+        port: http
+    nodeSelector:
+      workload: web
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: web
+        effect: NoSchedule
+
+postgres:
+  cluster:
+    name: pg-acme
+    instances: 3
+    parameters:
+      max_connections: "150"
+  backup:
+    destinationPath: s3://acme-backups/
+    retentionPolicy: 30d
+
+ollamaEmbed:
+  nodeName: gpu-01
+  gpuCount: 0

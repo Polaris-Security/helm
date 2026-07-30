@@ -1,0 +1,139 @@
+name: Release chart
+
+# Every push to main publishes the chart to the Helm repository hosted on the
+# gh-pages branch, so consumers get it with:
+#
+#   helm repo add polaris https://polaris-security.github.io/helm
+#   helm install polaris polaris/polaris
+#
+# The chart version is bumped automatically when the version currently in Chart.yaml
+# has already been released. Bump `version:` in Chart.yaml by hand for a minor or major
+# release and this workflow will respect it.
+on:
+  push:
+    branches:
+      - main
+
+# Never release two versions at once: the job pushes a version bump back to main and
+# rewrites the index on gh-pages, both of which race badly.
+concurrency:
+  group: release-chart
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/lint-test.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to push the version bump, create the GitHub Release, and write gh-pages.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # chart-releaser diffs against the previous tag to decide what changed.
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine chart version
+        id: version
+        run: |
+          set -euo pipefail
+          chart=charts/polaris-platform/Chart.yaml
+          # Only the top-level keys: `appVersion` does not match /^version:/ and the
+          # dependency's version line is indented.
+          name=$(awk '/^name:/    {print $2; exit}' "$chart")
+          current=$(awk '/^version:/ {print $2; exit}' "$chart")
+
+          git fetch --tags --quiet
+          # chart-releaser tags releases as <chart>-<version>. Walk the patch number
+          # forward until we find one that has not been released, so a hand-written
+          # minor/major bump in Chart.yaml is used as-is.
+          next="$current"
+          while git rev-parse -q --verify "refs/tags/${name}-${next}" >/dev/null; do
+            next=$(echo "$next" | awk -F. -v OFS=. '{$3=$3+1; print}')
+          done
+
+          echo "name=$name"       >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$next"       >> "$GITHUB_OUTPUT"
+          echo "Chart $name: $current -> $next"
+
+      - name: Commit version bump
+        if: steps.version.outputs.next != steps.version.outputs.current
+        run: |
+          set -euo pipefail
+          chart=charts/polaris-platform/Chart.yaml
+          # Rewrite the first ^version: line only, leaving appVersion and the indented
+          # dependency version untouched.
+          awk -v v="${{ steps.version.outputs.next }}" \
+            '!done && /^version:/ { print "version: " v; done=1; next } { print }' \
+            "$chart" > "$chart.tmp"
+          mv "$chart.tmp" "$chart"
+          grep -q "^version: ${{ steps.version.outputs.next }}$" "$chart"
+          git add "$chart"
+          git commit -m "chore: release chart ${{ steps.version.outputs.next }} [skip ci]"
+          # Another push may have landed while the tests ran.
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+
+      - name: Fetch chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          # The packaged chart must contain the subchart tarball, or installs from the
+          # repository fail on a missing dependency.
+          helm dependency build charts/polaris-platform
+
+      - name: Ensure the gh-pages branch exists
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages already exists"
+            exit 0
+          fi
+          echo "Bootstrapping an empty gh-pages branch for the chart index"
+          git switch --orphan gh-pages
+          cat > index.md <<'EOF'
+          # Polaris Security Helm repository
+
+          helm repo add polaris https://polaris-security.github.io/helm
+          helm repo update
+          helm install polaris polaris/polaris -f my-values.yaml
+          EOF
+          git add index.md
+          git commit -m "chore: initialise Helm chart repository"
+          git push origin gh-pages
+          git switch -
+
+      - name: Package and publish
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          charts_dir: charts
+          # A rerun after a partial failure should not abort on an existing release.
+          skip_existing: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          {
+            echo "### Chart published"
+            echo
+            echo '```sh'
+            echo "helm repo add polaris https://polaris-security.github.io/helm"
+            echo "helm repo update"
+            echo "helm install polaris polaris/polaris --version $VERSION"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

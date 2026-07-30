@@ -1,4 +1,5 @@
 .DS_Store
+.idea
 .idea/
 .vscode/
 
@@ -6,3 +7,5 @@
 # are the source of truth.
 charts/*/charts/
 charts/*/*.tgz
+
+

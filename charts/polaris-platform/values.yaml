@@ -180,8 +180,7 @@ mobile:
 # Create with: kubectl create secret docker-registry registry-credentials \
 #   --docker-server=https://index.docker.io/v1/ --docker-username=<user> \
 #   --docker-password=<access-token>
-imagePullSecrets:
-  - name: registry-credentials
+imagePullSecrets: []
 
 # Deployments to keep for rollback, across every workload in the chart.
 revisionHistoryLimit: 2
