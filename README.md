@@ -2,6 +2,8 @@
 
 Helm chart for deploying the **Polaris Security** platform on Kubernetes.
 
+Chart repository: **https://helm.polaris-security.nl/**
+
 Documentation, product information and support: **https://polaris-security.nl/**
 
 ---
@@ -56,7 +58,7 @@ kubectl create secret generic backend-secret --from-env-file=.env
 kubectl create secret generic valkey-secret --from-literal=valkey-password=<password>
 
 # Add the chart repository and install
-helm repo add polaris https://polaris-security.github.io/helm
+helm repo add polaris https://helm.polaris-security.nl/
 helm repo update
 helm upgrade --install polaris polaris/polaris -f my-values.yaml
 ```
@@ -118,8 +120,8 @@ Every push to `main` publishes the chart:
    validates the output against Kubernetes schemas with `kubeconform`, and asserts the
    required-value guards still fail loudly.
 2. `.github/workflows/release.yml` then bumps the chart version, packages the chart with
-   its subchart, attaches it to a GitHub Release, and updates the `index.yaml` served
-   from the `gh-pages` branch.
+   its subchart, attaches it to a GitHub Release, and updates the `index.yaml` on the
+   `gh-pages` branch — served from GitHub Pages at https://helm.polaris-security.nl/.
 
 The patch version is bumped automatically when the version in `Chart.yaml` has already
 been released. For a minor or major release, edit `version:` in `Chart.yaml` yourself —
