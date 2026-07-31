@@ -74,6 +74,10 @@ backend:
     POSTHOG_LOGS_ENABLED: "True"
     POSTHOG_LOG_LEVEL: WARNING
 
+    # Must be set for the knowledge exchange feature to do anything; the catalog reports itself unconfigured and stays empty otherwise
+    KNOWLEDGE_EXCHANGE_REPO: "Polaris-Security/exchange"
+    KNOWLEDGE_EXCHANGE_PREMUTE_THRESHOLD: "100"
+
   # Additional ConfigMap entries, merged over backend.config. Use this from your own
   # values file to add or override single keys without restating the block above.
   extraConfig: {}
