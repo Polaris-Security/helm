@@ -82,6 +82,10 @@ backend:
     KNOWLEDGE_EXCHANGE_REPO: "Polaris-Security/exchange"
     KNOWLEDGE_EXCHANGE_PREMUTE_THRESHOLD: "100"
 
+    # Setup the connection to Pulsegrid for monitoring services.
+    PULSEGRID_BASE_URL: ""
+    PULSEGRID_ORG_ID: ""
+
   # Additional ConfigMap entries, merged over backend.config. Use this from your own
   # values file to add or override single keys without restating the block above.
   extraConfig: {}
