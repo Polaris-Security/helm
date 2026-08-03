@@ -42,8 +42,9 @@ backend:
   config:
     DEBUG: "False"
 
-    # Set this to the full base URL of the install.
+    # Set this to the full base URL of the install, used among other things for setting up peerings with other Polaris installs.
     DEPLOYMENT_BASE_URL: ""
+    DEPLOYMENT_NAME: "Polaris Security"
 
     EMAIL_SSL_NO_VERIFY: "True"
     ENVIRONMENT: production
