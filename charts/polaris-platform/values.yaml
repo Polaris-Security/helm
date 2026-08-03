@@ -41,6 +41,10 @@ backend:
   # overrides the same key in backend.existingSecret. Keep secrets out of it.
   config:
     DEBUG: "False"
+
+    # Set this to the full base URL of the install.
+    DEPLOYMENT_BASE_URL: ""
+
     EMAIL_SSL_NO_VERIFY: "True"
     ENVIRONMENT: production
     LOG_LEVEL: INFO
