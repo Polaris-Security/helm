@@ -113,7 +113,8 @@ backend:
 
   worker:
     replicaCount: 1
-    annotations: {}
+    annotations: 
+      configmap.reloader.stakater.com/reload: "backend-config"
     podAnnotations: {}
     resources:
       requests:
@@ -133,7 +134,8 @@ backend:
   beat:
     # More than one beat replica double-schedules every periodic task. Keep at 1.
     replicaCount: 1
-    annotations: {}
+    annotations: 
+      configmap.reloader.stakater.com/reload: "backend-config"
     podAnnotations: {}
     resources:
       requests:
