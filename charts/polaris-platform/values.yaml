@@ -87,6 +87,17 @@ backend:
     PULSEGRID_BASE_URL: ""
     PULSEGRID_ORG_ID: ""
 
+    ASSISTANT_LOOP_MAX_ITERATIONS: 10
+    
+    # Triage Agent Work-phase loop caps (ADR-0024/0025). Like a Hunt this runs in a Celery                                                                             
+    # worker, so nothing but these caps bounds it. An incident that needs more research than                                                                           
+    # the cap allows stops mid-work with stop_reason = max_iterations, so the ceiling is an                                                                            
+    # operational knob: raise it from the environment when real incidents keep hitting it,                                                                             
+    # without a release. The deadline is a second, independent bound — raising the iteration                                                                           
+    # ceiling alone does nothing once a run is long enough to hit the wall clock first.   
+    TRIAGE_AGENT_LOOP_MAX_ITERATIONS: 15
+    TRIAGE_AGENT_LOOP_DEADLINE_S: 300
+
   # Additional ConfigMap entries, merged over backend.config. Use this from your own
   # values file to add or override single keys without restating the block above.
   extraConfig: {}
