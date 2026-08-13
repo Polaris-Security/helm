@@ -191,17 +191,6 @@ frontend:
     type: ClusterIP
     port: 80
 
-# OTA update server for the React Native staff app: serves the exported Expo update
-# bundle (iOS + Android Hermes bundles + metadata.json).
-#
-# NOTE: the mobile Deployment/Service is not part of this chart — only the image
-# coordinates and the Ingress route below are. Enable ingress.mobileUpdates.enabled once
-# you have a `mobile` Service in the namespace.
-mobile:
-  image:
-    repository: docker.io/polarissecurity/mobile
-    tag: 0.65.0
-
 # Docker Hub pull credentials for the private polarissecurity/* repositories.
 # Create with: kubectl create secret docker-registry registry-credentials \
 #   --docker-server=https://index.docker.io/v1/ --docker-username=<user> \
@@ -239,14 +228,6 @@ ingress:
     - /login-redirect/
     - /static/
     - /auth/
-  # OTA update bundle for the React Native staff app (expo-updates clients poll
-  # {host}/mobile-updates/metadata.json). Requires a `mobile` Service — see the
-  # mobile section above.
-  mobileUpdates:
-    enabled: false
-    path: /mobile-updates/
-    serviceName: mobile
-    servicePort: 80
   # Extra rules appended verbatim to spec.rules, for routing you cannot express above.
   extraRules: []
 

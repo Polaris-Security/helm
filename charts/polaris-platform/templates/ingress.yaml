@@ -38,17 +38,6 @@ spec:
                 port:
                   number: {{ $.Values.backend.service.port }}
           {{- end }}
-          {{- if $.Values.ingress.mobileUpdates.enabled }}
-          # OTA update bundle for the React Native staff app (expo-updates clients poll
-          # {host}/mobile-updates/metadata.json).
-          - path: {{ $.Values.ingress.mobileUpdates.path | quote }}
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ $.Values.ingress.mobileUpdates.serviceName }}
-                port:
-                  number: {{ $.Values.ingress.mobileUpdates.servicePort }}
-          {{- end }}
           # Catch-all: anything not claimed above is the single-page app.
           - path: /
             pathType: Prefix

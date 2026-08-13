@@ -9,8 +9,6 @@ ingress:
     - alerts.acme.test
   tls:
     secretName: polaris-tls
-  mobileUpdates:
-    enabled: true
 
 externalSecrets:
   secretStore:
