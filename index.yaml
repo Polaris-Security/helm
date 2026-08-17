@@ -2,6 +2,34 @@ apiVersion: v1
 entries:
   polaris:
   - apiVersion: v2
+    appVersion: 0.85.1
+    created: "2026-08-17T09:48:21.413058447Z"
+    dependencies:
+    - condition: valkey.enabled
+      name: valkey
+      repository: https://charts.bitnami.com/bitnami
+      version: 6.2.4
+    description: Polaris Security platform — Django/Celery backend, SPA frontend and
+      the supporting Postgres, Valkey, embedding and observability components.
+    digest: 4ff8edf9b18a3361752240e9ccda434e9ebcb84df9ae80ad72c4f8024803364e
+    home: https://github.com/Polaris-Security/polaris-helm
+    keywords:
+    - security
+    - incident-response
+    - django
+    - celery
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - email: eddie@vels.online
+      name: Eddie Vels
+    name: polaris
+    sources:
+    - https://github.com/Polaris-Security/polaris-helm
+    type: application
+    urls:
+    - https://github.com/Polaris-Security/helm/releases/download/polaris-1.1.32/polaris-1.1.32.tgz
+    version: 1.1.32
+  - apiVersion: v2
     appVersion: 0.85.0
     created: "2026-08-17T08:13:46.178939283Z"
     dependencies:
@@ -869,4 +897,4 @@ entries:
     urls:
     - https://github.com/Polaris-Security/helm/releases/download/polaris-1.1.0/polaris-1.1.0.tgz
     version: 1.1.0
-generated: "2026-08-17T08:13:46.179257038Z"
+generated: "2026-08-17T09:48:21.413227178Z"
