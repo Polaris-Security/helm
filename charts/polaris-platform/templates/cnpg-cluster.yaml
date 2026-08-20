@@ -1,18 +1,8 @@
 {{- if .Values.postgres.enabled }}
-{{- /*
-  Server names inside the object store: the one this cluster archives under, and the one
-  a recovery bootstrap restores from. Both default to the cluster name, which is why a
-  restore has to override at least one of them — see the guard below.
-*/}}
-{{- $archiveServer := .Values.postgres.backup.serverName | default .Values.postgres.cluster.name }}
+{{- /* Server name a recovery bootstrap restores from; empty ⇒ this cluster's own name. */}}
 {{- $sourceServer := .Values.postgres.recovery.sourceServerName | default .Values.postgres.cluster.name }}
-{{- if .Values.postgres.recovery.enabled }}
-  {{- if not .Values.postgres.backup.enabled }}
-    {{- fail "postgres.recovery.enabled requires postgres.backup.enabled: the object store to restore from is configured under postgres.backup." }}
-  {{- end }}
-  {{- if eq $archiveServer $sourceServer }}
-    {{- fail (printf "postgres.backup.serverName must differ from the server being restored from (%q): a recovered cluster archiving under that same name overwrites the backup it was restored from. Set postgres.backup.serverName to a name not yet used in the object store." $sourceServer) }}
-  {{- end }}
+{{- if and .Values.postgres.recovery.enabled (not .Values.postgres.backup.enabled) }}
+  {{- fail "postgres.recovery.enabled requires postgres.backup.enabled: the object store to restore from is configured under postgres.backup." }}
 {{- end }}
 # PostgreSQL provisioned by the CloudNativePG operator, which must already be installed
 # in the cluster. Set postgres.enabled=false to bring your own database instead — then
