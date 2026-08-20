@@ -1,4 +1,19 @@
 {{- if .Values.postgres.enabled }}
+{{- /*
+  Server names inside the object store: the one this cluster archives under, and the one
+  a recovery bootstrap restores from. Both default to the cluster name, which is why a
+  restore has to override at least one of them — see the guard below.
+*/}}
+{{- $archiveServer := .Values.postgres.backup.serverName | default .Values.postgres.cluster.name }}
+{{- $sourceServer := .Values.postgres.recovery.sourceServerName | default .Values.postgres.cluster.name }}
+{{- if .Values.postgres.recovery.enabled }}
+  {{- if not .Values.postgres.backup.enabled }}
+    {{- fail "postgres.recovery.enabled requires postgres.backup.enabled: the object store to restore from is configured under postgres.backup." }}
+  {{- end }}
+  {{- if eq $archiveServer $sourceServer }}
+    {{- fail (printf "postgres.backup.serverName must differ from the server being restored from (%q): a recovered cluster archiving under that same name overwrites the backup it was restored from. Set postgres.backup.serverName to a name not yet used in the object store." $sourceServer) }}
+  {{- end }}
+{{- end }}
 # PostgreSQL provisioned by the CloudNativePG operator, which must already be installed
 # in the cluster. Set postgres.enabled=false to bring your own database instead — then
 # postgres.urlSecret must name a Secret holding a connection URI.
@@ -21,9 +36,28 @@ spec:
   {{- end }}
 
   bootstrap:
+  {{- if .Values.postgres.recovery.enabled }}
+    # Restore from the object store rather than initialise an empty database; the source
+    # is the externalClusters entry below. CNPG only acts on bootstrap when it first
+    # creates the cluster, so this is inert on an existing one.
+    recovery:
+      source: recovery-source
+      {{- with .Values.postgres.recovery.recoveryTarget }}
+      recoveryTarget:
+        {{- /*
+          Quoted per key rather than dumped with toYaml: an unquoted targetTime such as
+          2026-08-19 14:30:00.000000+00 parses as a YAML timestamp, not as the string the
+          CRD expects. targetImmediate/exclusive are real booleans, so pass those as-is.
+        */}}
+        {{- range $key, $value := . }}
+        {{ $key }}: {{ if kindIs "string" $value }}{{ $value | quote }}{{ else }}{{ $value }}{{ end }}
+        {{- end }}
+      {{- end }}
+  {{- else }}
     initdb:
       database: {{ .Values.postgres.cluster.database }}
       owner: {{ .Values.postgres.cluster.owner }}
+  {{- end }}
 
   {{- with .Values.postgres.cluster.parameters }}
   postgresql:
@@ -44,29 +78,27 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
-  {{- if .Values.postgres.backup.enabled }}
-  # Recovery source: lets a fresh Cluster be bootstrapped from the object store by
-  # switching bootstrap above to `recovery`.
+  {{- if .Values.postgres.recovery.enabled }}
+  # What bootstrap.recovery restores from, read through the barman-cloud plugin against
+  # the same ObjectStore the backups are written to.
   externalClusters:
-    - name: {{ .Values.postgres.cluster.name }}
-      barmanObjectStore:
-        destinationPath: {{ .Values.postgres.backup.destinationPath | quote }}
-        endpointURL: {{ .Values.postgres.backup.endpointURL | quote }}
-        s3Credentials:
-          accessKeyId:
-            name: {{ .Values.postgres.backup.credentialsSecret.name }}
-            key: {{ .Values.postgres.backup.credentialsSecret.accessKeyIdKey }}
-          secretAccessKey:
-            name: {{ .Values.postgres.backup.credentialsSecret.name }}
-            key: {{ .Values.postgres.backup.credentialsSecret.secretAccessKeyKey }}
-        wal:
-          maxParallel: {{ .Values.postgres.backup.walMaxParallel }}
+    - name: recovery-source
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: {{ .Values.postgres.backup.objectStoreName }}
+          serverName: {{ $sourceServer }}
+  {{- end }}
 
+  {{- if .Values.postgres.backup.enabled }}
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
       parameters:
         barmanObjectName: {{ .Values.postgres.backup.objectStoreName }}
+        {{- with .Values.postgres.backup.serverName }}
+        serverName: {{ . }}
+        {{- end }}
   {{- end }}
 {{- if .Values.monitoring.enabled }}
 ---
@@ -103,6 +135,7 @@ spec:
         key: {{ .Values.postgres.backup.credentialsSecret.secretAccessKeyKey }}
     wal:
       compression: {{ .Values.postgres.backup.walCompression }}
+      maxParallel: {{ .Values.postgres.backup.walMaxParallel }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup

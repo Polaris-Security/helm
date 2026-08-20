@@ -81,9 +81,56 @@ Before a first install, review at least:
 | `imagePullSecrets` | Credentials for the private images. |
 | `postgres` | Let CNPG provision a cluster, or point `postgres.urlSecret` at your own database. |
 | `postgres.backup.destinationPath` | Ships as `s3://REPLACE-ME-cnpg-backups/`. |
+| `postgres.recovery` | Off by default. Turn on only to restore a *new* cluster from the object store — see [Restoring from backup](#restoring-from-backup). |
 | `externalSecrets` | Only if you pull secrets from a vault. |
 
 `values.yaml` is commented throughout — read it as the reference for everything else.
+
+## Restoring from backup
+
+`postgres.backup.enabled` only controls *archiving*. Restoring is a separate switch,
+`postgres.recovery.enabled`, so a normal install can never be talked into wiping itself
+by trying to restore.
+
+CNPG reads `bootstrap` only when it **creates** a Cluster, so recovery cannot be applied
+to a running one — you restore into a cluster that does not exist yet, either in a clean
+namespace or after deleting the existing `Cluster` object. The restored cluster must also
+archive under a new `serverName`, or it would overwrite the very backups it was restored
+from; the chart refuses to render if the two names collide.
+
+```yaml
+postgres:
+  backup:
+    enabled: true
+    # New name for the restored cluster's own archives.
+    serverName: cluster-polaris-restored
+  recovery:
+    enabled: true
+    # Empty ⇒ postgres.cluster.name. Set it if the backups were archived under
+    # a different name than the cluster you are restoring into.
+    sourceServerName: ""
+```
+
+That replays every archived WAL segment, i.e. restores to the most recent transaction.
+For point-in-time recovery, add a target — timestamps need an explicit timezone offset:
+
+```yaml
+postgres:
+  recovery:
+    enabled: true
+    recoveryTarget:
+      targetTime: "2026-08-19 14:30:00.000000+00"
+```
+
+CNPG picks the latest base backup preceding the target and replays WAL up to it. Other
+targets: `targetLSN`, `targetXID`, `targetName` (a restore point created with
+`pg_create_restore_point`), and `targetImmediate: true` to stop as soon as the restored
+backup is consistent. `backupID` pins which base backup to start from, and
+`exclusive: false` replays *through* the target rather than stopping just before it.
+
+Recovery needs the barman-cloud plugin and the same S3 credentials as backups, and the
+restored cluster comes up with the roles and databases the backup contained — the
+`postgres.cluster.database`/`owner` values apply to `initdb` only.
 
 ## Notes
 

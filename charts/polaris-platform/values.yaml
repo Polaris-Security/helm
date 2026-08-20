@@ -270,6 +270,10 @@ postgres:
   backup:
     enabled: true
     objectStoreName: minio-store
+    # Name this cluster archives its WAL and base backups under, inside destinationPath.
+    # Empty ⇒ cluster.name. You only need to set it when restoring: a recovered cluster
+    # must archive under a *new* name, or it writes over the backup it came from.
+    serverName: ""
     destinationPath: s3://REPLACE-ME-cnpg-backups/
     endpointURL: https://s3.eu-central-1.wasabisys.com
     retentionPolicy: "14d"
@@ -283,6 +287,32 @@ postgres:
       name: minio
       accessKeyIdKey: ACCESS_KEY_ID
       secretAccessKeyKey: ACCESS_SECRET_KEY
+
+  # Bootstrap the cluster by restoring from the object store instead of initialising an
+  # empty database. Deliberately separate from backup.enabled — archiving backups and
+  # restoring from them are independent decisions, and a routine install must never try
+  # to restore. Requires postgres.backup.enabled.
+  #
+  # Only read when the Cluster is *created*: CNPG ignores bootstrap on a cluster that
+  # already exists, so flipping this on an existing release does nothing. To restore,
+  # delete the old Cluster (or install into a clean namespace) with recovery.enabled=true
+  # and backup.serverName set to a name not yet used in the object store.
+  recovery:
+    enabled: false
+    # Server name to restore *from*, as archived under backup.destinationPath.
+    # Empty ⇒ cluster.name.
+    sourceServerName: ""
+    # Point-in-time recovery. Empty ⇒ replay every WAL segment available, i.e. restore to
+    # the last archived transaction. Set one target to stop earlier; timestamps need an
+    # explicit timezone offset:
+    #   recoveryTarget:
+    #     targetTime: "2026-08-19 14:30:00.000000+00"
+    # CNPG also accepts targetLSN, targetXID, targetName (a restore point made with
+    # pg_create_restore_point) and targetImmediate: true (stop the moment the restored
+    # backup is consistent). backupID pins which base backup to start replaying from;
+    # without it CNPG picks the latest one that precedes the target. Add
+    # exclusive: false to replay *through* the target rather than stopping before it.
+    recoveryTarget: {}
 
 # ─── external-secrets.io (optional) ───────────────────────────────────────────
 # Only relevant if you pull secrets from a vault via external-secrets.io. Everything
