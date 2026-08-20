@@ -13,7 +13,7 @@
 backend:
   image:
     repository: docker.io/polarissecurity/backend
-    tag: 0.88.0
+    tag: 0.88.1
     pullPolicy: Always
   # Name of an existing Secret holding the backend's environment variables. Every key in
   # it is injected with envFrom into the backend web/migrate, celery-worker and
@@ -166,7 +166,7 @@ backend:
 frontend:
   image:
     repository: docker.io/polarissecurity/frontend
-    tag: 0.88.0
+    tag: 0.88.1
     pullPolicy: Always
   replicaCount: 1
   podAnnotations: {}
