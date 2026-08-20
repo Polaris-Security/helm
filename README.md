@@ -94,22 +94,42 @@ by trying to restore.
 
 CNPG reads `bootstrap` only when it **creates** a Cluster, so recovery cannot be applied
 to a running one — you restore into a cluster that does not exist yet, either in a clean
-namespace or after deleting the existing `Cluster` object. The restored cluster must also
-archive under a new `serverName`, or it would overwrite the very backups it was restored
-from; the chart refuses to render if the two names collide.
+namespace or after deleting the existing `Cluster` object.
 
 ```yaml
 postgres:
-  backup:
-    enabled: true
-    # New name for the restored cluster's own archives.
-    serverName: cluster-polaris-restored
   recovery:
     enabled: true
     # Empty ⇒ postgres.cluster.name. Set it if the backups were archived under
     # a different name than the cluster you are restoring into.
     sourceServerName: ""
 ```
+
+Restoring in place — same cluster name, archiving back under the same name — is the
+common case and works as-is. The restored cluster is promoted onto a new timeline, so its
+WAL segments do not collide with the ones it replayed. Two caveats are worth knowing:
+
+- **Retrying a restore.** A second attempt from the same base backup promotes onto the
+  same timeline as the first, so it archives segments the first attempt already wrote.
+  barman-cloud rejects the conflicting writes rather than overwriting them, which stalls
+  WAL archiving and leaves segments accumulating on the PVC until it fills.
+- **A mixed catalog.** Several cluster incarnations then live under one server name, so a
+  later point-in-time recovery may need an explicit `backupID` to pin which one it means,
+  and `retentionPolicy` ages all of them out together.
+
+Set `postgres.backup.serverName` to give the restored cluster its own archive prefix and
+sidestep both — at the cost of splitting the backup history in two:
+
+```yaml
+postgres:
+  backup:
+    serverName: cluster-polaris-restored
+  recovery:
+    enabled: true
+```
+
+Turn `recovery.enabled` back off once a restore has completed, so re-creating the Cluster
+later doesn't silently restore again instead of starting fresh.
 
 That replays every archived WAL segment, i.e. restores to the most recent transaction.
 For point-in-time recovery, add a target — timestamps need an explicit timezone offset:

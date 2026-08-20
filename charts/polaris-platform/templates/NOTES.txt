@@ -27,6 +27,22 @@ Prerequisites this chart expects to already exist:
 
 {{- end }}
 
+{{- if and .Values.postgres.enabled .Values.postgres.recovery.enabled }}
+
+NOTE: postgres.recovery.enabled is on, so Cluster "{{ .Values.postgres.cluster.name }}" bootstraps by
+restoring from {{ .Values.postgres.recovery.sourceServerName | default .Values.postgres.cluster.name }} in the object store — CNPG acts on this only when it
+*creates* the cluster, and ignores it on one that already exists.
+{{- if not .Values.postgres.backup.serverName }}
+It also archives back under that same name. That keeps one continuous catalog, but if you
+restore a second time from the same base backup the new timeline collides with the first
+attempt's; barman-cloud rejects the conflicting segments, WAL archiving stalls, and the
+segments accumulate on the PVC. Set postgres.backup.serverName to give this cluster its
+own prefix if you expect to retry.
+{{- end }}
+Turn postgres.recovery.enabled back off once the restore is done, so a future re-create
+does not silently restore again.
+{{- end }}
+
 Watch the rollout:
 
   kubectl -n {{ .Release.Namespace }} rollout status deployment/backend

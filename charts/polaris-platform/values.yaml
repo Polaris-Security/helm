@@ -271,8 +271,10 @@ postgres:
     enabled: true
     objectStoreName: minio-store
     # Name this cluster archives its WAL and base backups under, inside destinationPath.
-    # Empty ⇒ cluster.name. You only need to set it when restoring: a recovered cluster
-    # must archive under a *new* name, or it writes over the backup it came from.
+    # Empty ⇒ cluster.name, which is almost always what you want — including when
+    # restoring, where keeping the name gives you one continuous backup catalog.
+    # Set it to fork a restored cluster off into its own archive prefix instead; see
+    # "Restoring from backup" in the README for when that is worth doing.
     serverName: ""
     destinationPath: s3://REPLACE-ME-cnpg-backups/
     endpointURL: https://s3.eu-central-1.wasabisys.com
@@ -295,8 +297,15 @@ postgres:
   #
   # Only read when the Cluster is *created*: CNPG ignores bootstrap on a cluster that
   # already exists, so flipping this on an existing release does nothing. To restore,
-  # delete the old Cluster (or install into a clean namespace) with recovery.enabled=true
-  # and backup.serverName set to a name not yet used in the object store.
+  # delete the old Cluster (or install into a clean namespace) and sync with
+  # recovery.enabled=true.
+  #
+  # Restoring under the cluster's own name is fine and is the common case. Two things to
+  # know when you do: a second restore from the same base backup archives the same
+  # timeline over the first attempt's, which barman-cloud rejects rather than overwrites
+  # — WAL archiving then stalls and segments pile up on the PVC — and the catalog ends up
+  # holding several incarnations, so a later PITR may need backupID to say which one it
+  # means. Set backup.serverName to give a restored cluster its own prefix and avoid both.
   recovery:
     enabled: false
     # Server name to restore *from*, as archived under backup.destinationPath.
