@@ -32,6 +32,12 @@ spec:
     # creates the cluster, so this is inert on an existing one.
     recovery:
       source: recovery-source
+      # The database and its owning role inside the restored cluster. CNPG defaults both to
+      # "app"; leaving that in place makes the generated <cluster>-app Secret — the one the
+      # backend reads DATABASE_URL from — point at a user and database a restored backup
+      # does not contain.
+      database: {{ .Values.postgres.cluster.database }}
+      owner: {{ .Values.postgres.cluster.owner }}
       {{- with .Values.postgres.recovery.recoveryTarget }}
       recoveryTarget:
         {{- /*
