@@ -80,3 +80,4 @@ jobs:
           expect_failure "ingress enabled with no hosts" --set ingress.hosts=null
           expect_failure "missing backend image tag"     --set backend.image.tag=null
           expect_failure "postgres disabled without urlSecret.name" --set postgres.enabled=false
+          expect_failure "mobile enabled with no host" --set mobile.enabled=true

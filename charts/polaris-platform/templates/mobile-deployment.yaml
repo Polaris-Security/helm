@@ -1,0 +1,47 @@
+{{- if .Values.mobile.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mobile
+spec:
+  replicas: {{ .Values.mobile.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      app: mobile
+  template:
+    metadata:
+      labels:
+        app: mobile
+      {{- with .Values.mobile.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.mobile) | trim) }}
+      {{- nindent 6 . }}
+      {{- end }}
+      containers:
+        - name: mobile
+          image: {{ .Values.mobile.image.repository }}:{{ required "mobile.image.tag must be set" .Values.mobile.image.tag }}
+          imagePullPolicy: {{ .Values.mobile.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          {{- with .Values.mobile.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.mobile.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.mobile.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.mobile.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

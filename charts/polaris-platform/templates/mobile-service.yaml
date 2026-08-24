@@ -1,0 +1,16 @@
+{{- if .Values.mobile.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mobile
+  labels:
+    app: mobile
+spec:
+  type: {{ .Values.mobile.service.type }}
+  selector:
+    app: mobile
+  ports:
+    - name: http
+      port: {{ .Values.mobile.service.port }}
+      targetPort: http
+{{- end }}

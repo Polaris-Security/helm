@@ -33,20 +33,26 @@ database.
 {{- end -}}
 
 {{/*
-Hostnames Django accepts requests for. Defaults to the Ingress hosts plus the in-cluster
-Service DNS name, so a hostname is normally declared exactly once (ingress.hosts).
+Hostnames Django accepts requests for. Defaults to the Ingress hosts, the in-cluster
+Service DNS name and — when the PWA is enabled — mobile.host, so a hostname is normally
+declared exactly once. The mobile host must be here: the Ingress passes the original Host
+through, so without it every request from the app is a 400.
 */}}
 {{- define "polaris.allowedHosts" -}}
 {{- if .Values.backend.allowedHosts -}}
 {{- join "," .Values.backend.allowedHosts -}}
 {{- else -}}
 {{- $hosts := concat (.Values.ingress.hosts | default list) (list (printf "backend.%s.svc.cluster.local" .Release.Namespace)) -}}
+{{- if and .Values.mobile.enabled .Values.mobile.host -}}
+{{- $hosts = append $hosts .Values.mobile.host -}}
+{{- end -}}
 {{- join "," $hosts -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
-Origins trusted for CSRF. Defaults to https://<host> for each Ingress host.
+Origins trusted for CSRF. Defaults to https://<host> for each Ingress host, plus the
+mobile host when enabled.
 */}}
 {{- define "polaris.csrfTrustedOrigins" -}}
 {{- if .Values.backend.csrfTrustedOrigins -}}
@@ -55,6 +61,9 @@ Origins trusted for CSRF. Defaults to https://<host> for each Ingress host.
 {{- $origins := list -}}
 {{- range .Values.ingress.hosts | default list -}}
 {{- $origins = append $origins (printf "https://%s" .) -}}
+{{- end -}}
+{{- if and .Values.mobile.enabled .Values.mobile.host -}}
+{{- $origins = append $origins (printf "https://%s" .Values.mobile.host) -}}
 {{- end -}}
 {{- join "," $origins -}}
 {{- end -}}

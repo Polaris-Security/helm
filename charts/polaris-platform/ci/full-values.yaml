@@ -10,6 +10,11 @@ ingress:
   tls:
     secretName: polaris-tls
 
+# Exercises the PWA's Deployment, Service and its own Ingress rule.
+mobile:
+  enabled: true
+  host: mobile.acme.test
+
 externalSecrets:
   secretStore:
     enabled: true

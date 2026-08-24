@@ -2,6 +2,9 @@
 {{- if not .Values.ingress.hosts }}
 {{- fail "ingress.enabled is true but ingress.hosts is empty — set at least one hostname" }}
 {{- end }}
+{{- if and .Values.mobile.enabled (not .Values.mobile.host) }}
+{{- fail "mobile.enabled is true but mobile.host is empty — set the hostname the PWA is served on" }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -19,6 +22,9 @@ spec:
     - hosts:
         {{- range .Values.ingress.hosts }}
         - {{ . | quote }}
+        {{- end }}
+        {{- if .Values.mobile.enabled }}
+        - {{ .Values.mobile.host | quote }}
         {{- end }}
       {{- with .Values.ingress.tls.secretName }}
       secretName: {{ . }}
@@ -46,6 +52,31 @@ spec:
                 name: frontend
                 port:
                   number: {{ $.Values.frontend.service.port }}
+    {{- end }}
+    {{- if .Values.mobile.enabled }}
+    # The mobile PWA's own host. Same backend prefixes as above — /api/ for the app's
+    # calls and /auth/ for the OIDC round trip, which has to run on this hostname so
+    # allauth's session cookie is first-party to the app that exchanges it for a token.
+    # Everything else is the PWA's own single-page bundle.
+    - host: {{ .Values.mobile.host | quote }}
+      http:
+        paths:
+          {{- range $path := .Values.ingress.backendPaths }}
+          - path: {{ $path | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: {{ $.Values.backend.service.port }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mobile
+                port:
+                  number: {{ .Values.mobile.service.port }}
     {{- end }}
     {{- with .Values.ingress.extraRules }}
     {{- toYaml . | nindent 4 }}

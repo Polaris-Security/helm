@@ -2,6 +2,9 @@ Polaris {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in na
 
 Backend image: {{ include "polaris.backendImage" . }}
 Frontend image: {{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}
+{{- if .Values.mobile.enabled }}
+Mobile image: {{ .Values.mobile.image.repository }}:{{ .Values.mobile.image.tag }}
+{{- end }}
 
 Prerequisites this chart expects to already exist:
 
@@ -51,6 +54,13 @@ Watch the rollout:
 Reachable at:
 {{- range .Values.ingress.hosts }}
   https://{{ . }}
+{{- end }}
+{{- if .Values.mobile.enabled }}
+  https://{{ .Values.mobile.host }}  (mobile PWA)
+
+  The PWA signs people in with OIDC, so the identity provider must accept
+    https://{{ .Values.mobile.host }}/auth/oidc/authentik/login/callback/
+  as a redirect URI, and the TLS certificate must cover this host.
 {{- end }}
 {{- if not .Values.ingress.tls.secretName }}
 

@@ -191,6 +191,45 @@ frontend:
     type: ClusterIP
     port: 80
 
+# ─── Mobile PWA ───────────────────────────────────────────────────────────────
+# The phone app: an incident queue that opens into the Incident Assistant as a chat.
+# A separate image and a separate hostname from `frontend`, not a responsive mode of it.
+mobile:
+  # Off by default. It is served on a hostname of its own, so an install that has not
+  # chosen one should not get a Deployment with nothing routing to it. Turning it on
+  # without setting mobile.host fails the render rather than producing a dead Ingress.
+  enabled: false
+  # The hostname the PWA answers on, e.g. mobile.polaris.example.com. Required when
+  # enabled. It is added to the derived backend.allowedHosts and csrfTrustedOrigins, so
+  # like ingress.hosts it is normally declared exactly once, here.
+  host: ""
+  image:
+    repository: docker.io/polarissecurity/mobile
+    tag: 0.90.0
+    pullPolicy: Always
+  replicaCount: 1
+  podAnnotations: {}
+  resources: {}
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 20
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+  service:
+    type: ClusterIP
+    port: 80
+
 # Docker Hub pull credentials for the private polarissecurity/* repositories.
 # Create with: kubectl create secret docker-registry registry-credentials \
 #   --docker-server=https://index.docker.io/v1/ --docker-username=<user> \

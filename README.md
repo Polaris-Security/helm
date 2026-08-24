@@ -19,7 +19,8 @@ supporting infrastructure it expects:
 | `celery-worker` | Celery workers for background processing |
 | `celery-beat` | Periodic task scheduler (single replica by design) |
 | `frontend` | SPA served over HTTP |
-| Ingress | One Ingress routing `/api/`, `/django-admin/`, `/static/`, `/auth/` and friends to the backend, everything else to the frontend |
+| `mobile` | The mobile PWA, on its own hostname (optional — `mobile.enabled`) |
+| Ingress | One Ingress routing `/api/`, `/django-admin/`, `/static/`, `/auth/` and friends to the backend, everything else to the frontend — and, when `mobile.enabled`, the same prefixes on `mobile.host` with the PWA as its catch-all |
 | PostgreSQL | A CloudNativePG `Cluster` (optional), with S3/WAL archiving and scheduled backups via the barman-cloud plugin |
 | Valkey | Celery broker and cache, via the Bitnami subchart (optional) |
 | `ollama-embed` | Self-hosted Ollama used only for embeddings; chat models run on Ollama Cloud |
@@ -83,8 +84,25 @@ Before a first install, review at least:
 | `postgres.backup.destinationPath` | Ships as `s3://REPLACE-ME-cnpg-backups/`. |
 | `postgres.recovery` | Off by default. Turn on only to restore a *new* cluster from the object store — see [Restoring from backup](#restoring-from-backup). |
 | `externalSecrets` | Only if you pull secrets from a vault. |
+| `mobile.enabled` / `mobile.host` | The mobile PWA and the hostname it answers on. Off by default; enabling it without a host fails the render. The host joins the derived `allowedHosts`/`csrfTrustedOrigins` and the Ingress `tls` block, so declare it only here. |
 
 `values.yaml` is commented throughout — read it as the reference for everything else.
+
+### The mobile PWA
+
+`mobile.enabled` adds a Deployment, a Service and a second Ingress rule on `mobile.host`.
+That rule sends the same `ingress.backendPaths` to the backend as the main host does and
+everything else to the PWA bundle.
+
+`/auth/` matters as much as `/api/` here. The app signs people in over OIDC and exchanges
+the resulting Django session for an API token, which only works while the whole round trip
+stays on `mobile.host` — the session cookie has to be first-party to the app that reads
+it. Two things outside the chart have to agree:
+
+- the TLS certificate must cover `mobile.host` (the chart lists it under `tls`, but a
+  cert-manager `Certificate` you manage yourself needs the SAN adding), and
+- the identity provider must accept
+  `https://<mobile.host>/auth/oidc/authentik/login/callback/` as a redirect URI.
 
 ## Restoring from backup
 
