@@ -1,10 +1,19 @@
 name: Release chart
 
-# Every push to main publishes the chart to the Helm repository hosted on the
-# gh-pages branch, so consumers get it with:
+# Every push to main publishes the chart to two Helm repositories:
+#
+#   - GitHub Pages (the gh-pages branch):  https://polaris-security.github.io/helm
+#   - the in-cluster ChartMuseum mirror:   https://charts.vels.online
 #
 #   helm repo add polaris https://polaris-security.github.io/helm
 #   helm install polaris polaris/polaris
+#
+# GitHub has been unreliable, so the two are independent: every GitHub-facing step is
+# allowed to fail without stopping the ChartMuseum push. A GitHub failure still fails
+# the run at the very end, so it does not go unnoticed.
+#
+# ChartMuseum credentials come from the CHARTMUSEUM_USERNAME / CHARTMUSEUM_PASSWORD
+# repository secrets; leave them unset if the instance does not require auth.
 #
 # The chart version is bumped automatically when the version currently in Chart.yaml
 # has already been released. Bump `version:` in Chart.yaml by hand for a minor or major
@@ -22,6 +31,9 @@ on:
 concurrency:
   group: release-chart
   cancel-in-progress: false
+
+env:
+  CHARTMUSEUM_URL: https://charts.vels.online
 
 jobs:
   test:
@@ -46,6 +58,9 @@ jobs:
 
       - name: Determine chart version
         id: version
+        env:
+          CHARTMUSEUM_USERNAME: ${{ secrets.CHARTMUSEUM_USERNAME }}
+          CHARTMUSEUM_PASSWORD: ${{ secrets.CHARTMUSEUM_PASSWORD }}
         run: |
           set -euo pipefail
           chart=charts/polaris-platform/Chart.yaml
@@ -55,11 +70,24 @@ jobs:
           current=$(awk '/^version:/ {print $2; exit}' "$chart")
 
           git fetch --tags --quiet
-          # chart-releaser tags releases as <chart>-<version>. Walk the patch number
-          # forward until we find one that has not been released, so a hand-written
-          # minor/major bump in Chart.yaml is used as-is.
+          auth=()
+          if [ -n "${CHARTMUSEUM_USERNAME:-}" ]; then
+            auth=(--user "$CHARTMUSEUM_USERNAME:$CHARTMUSEUM_PASSWORD")
+          fi
+          # A version counts as released if chart-releaser tagged it (<chart>-<version>)
+          # or ChartMuseum already has it — the latter covers a run where the GitHub
+          # release failed but the mirror push succeeded, so we never publish a
+          # different build under a version ChartMuseum already serves. An unreachable
+          # ChartMuseum is treated as "not released" rather than blocking.
+          released() {
+            git rev-parse -q --verify "refs/tags/${name}-$1" >/dev/null && return 0
+            curl -fsS -o /dev/null --max-time 15 "${auth[@]}" \
+              "$CHARTMUSEUM_URL/api/charts/${name}/$1" 2>/dev/null
+          }
+          # Walk the patch number forward until we find one that has not been released,
+          # so a hand-written minor/major bump in Chart.yaml is used as-is.
           next="$current"
-          while git rev-parse -q --verify "refs/tags/${name}-${next}" >/dev/null; do
+          while released "$next"; do
             next=$(echo "$next" | awk -F. -v OFS=. '{$3=$3+1; print}')
           done
 
@@ -82,9 +110,44 @@ jobs:
           grep -q "^version: ${{ steps.version.outputs.next }}$" "$chart"
           git add "$chart"
           git commit -m "chore: release chart ${{ steps.version.outputs.next }} [skip ci]"
+
+      - name: Push version bump
+        id: push_bump
+        if: steps.version.outputs.next != steps.version.outputs.current
+        continue-on-error: true
+        run: |
+          set -euo pipefail
           # Another push may have landed while the tests ran.
           git pull --rebase origin main
           git push origin HEAD:main
+
+      # Before fetching dependencies: `switch --orphan` empties the working tree, so
+      # keep it away from the fetched subchart tarball.
+      - name: Ensure the gh-pages branch exists
+        id: gh_pages
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages already exists"
+            exit 0
+          fi
+          echo "Bootstrapping an empty gh-pages branch for the chart index"
+          # Restore by SHA rather than `git switch -`: the checkout action can leave
+          # HEAD detached, and then @{-1} does not resolve.
+          restore=$(git rev-parse HEAD)
+          git switch --orphan gh-pages
+          cat > index.md <<'EOF'
+          # Polaris Security Helm repository
+
+          helm repo add polaris https://polaris-security.github.io/helm
+          helm repo update
+          helm install polaris polaris/polaris -f my-values.yaml
+          EOF
+          git add index.md
+          git commit -m "chore: initialise Helm chart repository"
+          git push origin gh-pages
+          git checkout -f "$restore"
 
       - uses: azure/setup-helm@v5
         with:
@@ -97,28 +160,39 @@ jobs:
           # repository fail on a missing dependency.
           helm dependency build charts/polaris-platform
 
-      - name: Ensure the gh-pages branch exists
+      # Pushed before the GitHub release so a GitHub outage cannot get in its way.
+      - name: Push to ChartMuseum
+        id: chartmuseum
+        env:
+          CHARTMUSEUM_USERNAME: ${{ secrets.CHARTMUSEUM_USERNAME }}
+          CHARTMUSEUM_PASSWORD: ${{ secrets.CHARTMUSEUM_PASSWORD }}
         run: |
           set -euo pipefail
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            echo "gh-pages already exists"
-            exit 0
+          # Package outside the checkout so chart-releaser never sees this tarball.
+          out="$RUNNER_TEMP/chartmuseum"
+          mkdir -p "$out"
+          helm package charts/polaris-platform --destination "$out"
+          pkg="$out/${{ steps.version.outputs.name }}-${{ steps.version.outputs.next }}.tgz"
+          test -f "$pkg"
+
+          auth=()
+          if [ -n "${CHARTMUSEUM_USERNAME:-}" ]; then
+            auth=(--user "$CHARTMUSEUM_USERNAME:$CHARTMUSEUM_PASSWORD")
           fi
-          echo "Bootstrapping an empty gh-pages branch for the chart index"
-          git switch --orphan gh-pages
-          cat > index.md <<'EOF'
-          # Polaris Security Helm repository
+          status=$(curl -sS --retry 3 --retry-all-errors --max-time 120 \
+            -o "$out/response" -w '%{http_code}' "${auth[@]}" \
+            --data-binary "@$pkg" "$CHARTMUSEUM_URL/api/charts")
+          cat "$out/response"; echo
+          case "$status" in
+            201) echo "Pushed $(basename "$pkg") to $CHARTMUSEUM_URL" ;;
+            # Same as chart-releaser's skip_existing: a rerun must not fail here.
+            409) echo "$(basename "$pkg") already exists on ChartMuseum, skipping" ;;
+            *)   echo "::error::ChartMuseum push failed with HTTP $status"; exit 1 ;;
+          esac
 
-          helm repo add polaris https://polaris-security.github.io/helm
-          helm repo update
-          helm install polaris polaris/polaris -f my-values.yaml
-          EOF
-          git add index.md
-          git commit -m "chore: initialise Helm chart repository"
-          git push origin gh-pages
-          git switch -
-
-      - name: Package and publish
+      - name: Package and publish to GitHub Pages
+        id: github
+        continue-on-error: true
         uses: helm/chart-releaser-action@v1.7.0
         with:
           charts_dir: charts
@@ -128,15 +202,40 @@ jobs:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
+        if: always() && steps.version.outputs.next != ''
         env:
           VERSION: ${{ steps.version.outputs.next }}
+          CHARTMUSEUM: ${{ steps.chartmuseum.outcome }}
+          GITHUB_PAGES: ${{ steps.github.outcome }}
+          PUSH_BUMP: ${{ steps.push_bump.outcome }}
         run: |
           {
-            echo "### Chart published"
+            echo "### Chart $VERSION"
+            echo
+            echo "| Repository | Result |"
+            echo "| --- | --- |"
+            echo "| ChartMuseum ($CHARTMUSEUM_URL) | ${CHARTMUSEUM:-not run} |"
+            echo "| GitHub Pages | ${GITHUB_PAGES:-not run} |"
+            if [ "$PUSH_BUMP" = "failure" ]; then
+              echo "| Version bump push to main | failure |"
+            fi
             echo
             echo '```sh'
             echo "helm repo add polaris https://polaris-security.github.io/helm"
+            echo "# or, if GitHub is down:"
+            echo "helm repo add polaris $CHARTMUSEUM_URL"
             echo "helm repo update"
             echo "helm install polaris polaris/polaris --version $VERSION"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # The GitHub steps are continue-on-error so they cannot block ChartMuseum; surface
+      # their failure here so the run still goes red.
+      - name: Fail if a GitHub publish step failed
+        if: >-
+          steps.push_bump.outcome == 'failure' ||
+          steps.gh_pages.outcome == 'failure' ||
+          steps.github.outcome == 'failure'
+        run: |
+          echo "::error::Publishing to GitHub failed (bump push: ${{ steps.push_bump.outcome }}, gh-pages: ${{ steps.gh_pages.outcome }}, release: ${{ steps.github.outcome }}). ChartMuseum: ${{ steps.chartmuseum.outcome }}."
+          exit 1

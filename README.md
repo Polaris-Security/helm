@@ -64,6 +64,9 @@ helm repo update
 helm upgrade --install polaris polaris/polaris -f my-values.yaml
 ```
 
+Every release is also pushed to a ChartMuseum mirror at `https://charts.vels.online`.
+Use it in place of the URL above when GitHub is unavailable.
+
 `helm search repo polaris --versions` lists the available chart versions; pass
 `--version` to pin one. To work from a checkout of this repository instead:
 
