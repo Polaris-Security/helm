@@ -12,6 +12,10 @@ name: Release chart
 # allowed to fail without stopping the ChartMuseum push. A GitHub failure still fails
 # the run at the very end, so it does not go unnoticed.
 #
+# ChartMuseum is currently DISABLED (CHARTMUSEUM_ENABLED below) because its push was
+# failing and blocking GitHub releases. While disabled, nothing talks to ChartMuseum and
+# the GitHub steps fail the job directly again. Set it back to "true" to re-enable.
+#
 # ChartMuseum credentials come from the CHARTMUSEUM_USERNAME / CHARTMUSEUM_PASSWORD
 # repository secrets; leave them unset if the instance does not require auth.
 #
@@ -33,6 +37,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  CHARTMUSEUM_ENABLED: "false"
   CHARTMUSEUM_URL: https://charts.vels.online
 
 jobs:
@@ -81,6 +86,7 @@ jobs:
           # ChartMuseum is treated as "not released" rather than blocking.
           released() {
             git rev-parse -q --verify "refs/tags/${name}-$1" >/dev/null && return 0
+            [ "$CHARTMUSEUM_ENABLED" = "true" ] || return 1
             curl -fsS -o /dev/null --max-time 15 "${auth[@]}" \
               "$CHARTMUSEUM_URL/api/charts/${name}/$1" 2>/dev/null
           }
@@ -114,7 +120,7 @@ jobs:
       - name: Push version bump
         id: push_bump
         if: steps.version.outputs.next != steps.version.outputs.current
-        continue-on-error: true
+        continue-on-error: ${{ env.CHARTMUSEUM_ENABLED == 'true' }}
         run: |
           set -euo pipefail
           # Another push may have landed while the tests ran.
@@ -125,7 +131,7 @@ jobs:
       # keep it away from the fetched subchart tarball.
       - name: Ensure the gh-pages branch exists
         id: gh_pages
-        continue-on-error: true
+        continue-on-error: ${{ env.CHARTMUSEUM_ENABLED == 'true' }}
         run: |
           set -euo pipefail
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
@@ -163,6 +169,7 @@ jobs:
       # Pushed before the GitHub release so a GitHub outage cannot get in its way.
       - name: Push to ChartMuseum
         id: chartmuseum
+        if: env.CHARTMUSEUM_ENABLED == 'true'
         env:
           CHARTMUSEUM_USERNAME: ${{ secrets.CHARTMUSEUM_USERNAME }}
           CHARTMUSEUM_PASSWORD: ${{ secrets.CHARTMUSEUM_PASSWORD }}
@@ -192,7 +199,7 @@ jobs:
 
       - name: Package and publish to GitHub Pages
         id: github
-        continue-on-error: true
+        continue-on-error: ${{ env.CHARTMUSEUM_ENABLED == 'true' }}
         uses: helm/chart-releaser-action@v1.7.0
         with:
           charts_dir: charts
@@ -214,7 +221,9 @@ jobs:
             echo
             echo "| Repository | Result |"
             echo "| --- | --- |"
-            echo "| ChartMuseum ($CHARTMUSEUM_URL) | ${CHARTMUSEUM:-not run} |"
+            if [ "$CHARTMUSEUM_ENABLED" = "true" ]; then
+              echo "| ChartMuseum ($CHARTMUSEUM_URL) | ${CHARTMUSEUM:-not run} |"
+            fi
             echo "| GitHub Pages | ${GITHUB_PAGES:-not run} |"
             if [ "$PUSH_BUMP" = "failure" ]; then
               echo "| Version bump push to main | failure |"
@@ -222,8 +231,10 @@ jobs:
             echo
             echo '```sh'
             echo "helm repo add polaris https://polaris-security.github.io/helm"
-            echo "# or, if GitHub is down:"
-            echo "helm repo add polaris $CHARTMUSEUM_URL"
+            if [ "$CHARTMUSEUM_ENABLED" = "true" ]; then
+              echo "# or, if GitHub is down:"
+              echo "helm repo add polaris $CHARTMUSEUM_URL"
+            fi
             echo "helm repo update"
             echo "helm install polaris polaris/polaris --version $VERSION"
             echo '```'
