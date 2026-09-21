@@ -131,7 +131,7 @@ backend:
       requests:
         memory: 1024Mi
       limits:
-        memory: 2048Mi
+        memory: 3096Mi
     nodeSelector: {}
     tolerations: []
     affinity: {}
