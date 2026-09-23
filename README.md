@@ -20,7 +20,7 @@ supporting infrastructure it expects:
 | `celery-beat` | Periodic task scheduler (single replica by design) |
 | `frontend` | SPA served over HTTP |
 | `mobile` | The mobile PWA, on its own hostname (optional — `mobile.enabled`) |
-| Ingress | One Ingress routing `/api/`, `/django-admin/`, `/static/`, `/auth/` and friends to the backend, everything else to the frontend — and, when `mobile.enabled`, the same prefixes on `mobile.host` with the PWA as its catch-all |
+| Ingress | One Ingress routing `/api/`, `/django-admin/`, `/static/`, `/auth/` and friends to the backend, everything else to the frontend — and, when `mobile.enabled`, the same prefixes on `mobile.host`, its `apple-app-site-association` from the frontend, and the PWA as its catch-all |
 | PostgreSQL | A CloudNativePG `Cluster` (optional), with S3/WAL archiving and scheduled backups via the barman-cloud plugin |
 | Valkey | Celery broker and cache, via the Bitnami subchart (optional) |
 | `ollama-embed` | Self-hosted Ollama used only for embeddings; chat models run on Ollama Cloud |
@@ -94,8 +94,11 @@ Before a first install, review at least:
 ### The mobile PWA
 
 `mobile.enabled` adds a Deployment, a Service and a second Ingress rule on `mobile.host`.
-That rule sends the same `ingress.backendPaths` to the backend as the main host does and
-everything else to the PWA bundle.
+That rule sends the same `ingress.backendPaths` to the backend as the main host does,
+`/.well-known/apple-app-site-association` to the frontend, and everything else to the PWA
+bundle. The association file comes from the frontend because that image is rebuilt every
+release and the mobile image is not. The iOS app's Authentik sign-in depends on the file's
+`webcredentials` entry being current on `mobile.host`.
 
 `/auth/` matters as much as `/api/` here. The app signs people in over OIDC and exchanges
 the resulting Django session for an API token, which only works while the whole round trip

@@ -70,6 +70,17 @@ spec:
                 port:
                   number: {{ $.Values.backend.service.port }}
           {{- end }}
+          # iOS reads the app's domain association here: universal links, and the
+          # webcredentials the app's Authentik sign-in needs for its https callback. The
+          # frontend image ships the same file and is rebuilt every release; the mobile
+          # image is not, so its copy would go stale.
+          - path: /.well-known/apple-app-site-association
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: {{ .Values.frontend.service.port }}
           - path: /
             pathType: Prefix
             backend:
