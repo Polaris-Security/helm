@@ -5,9 +5,9 @@ description: >-
   Postgres, Valkey, embedding and observability components.
 type: application
 # Chart version. Bump on every chart change.
-version: 1.1.79
+version: 1.1.80
 # Version of the Polaris platform this chart defaults to deploying.
-appVersion: "0.99.21"
+appVersion: "0.99.22"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/Polaris-Security/polaris-helm
 sources:
