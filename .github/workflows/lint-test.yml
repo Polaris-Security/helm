@@ -45,6 +45,16 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: helm lint polaris-asset-discovery
+        run: |
+          # The standalone chart has no usable defaults (polaris.url is site-specific), so
+          # it is linted with each CI override file only.
+          for f in charts/polaris-asset-discovery/ci/*-values.yaml; do
+            echo "::group::helm lint -f $f"
+            helm lint charts/polaris-asset-discovery -f "$f"
+            echo "::endgroup::"
+          done
+
       - name: Render and validate against Kubernetes schemas
         run: |
           set -euo pipefail
@@ -62,6 +72,12 @@ jobs:
           for f in charts/polaris-platform/ci/*-values.yaml; do
             render "$(basename "$f")" -f "$f"
           done
+          for f in charts/polaris-asset-discovery/ci/*-values.yaml; do
+            echo "::group::asset-discovery $(basename "$f")"
+            helm template discovery charts/polaris-asset-discovery --namespace polaris -f "$f" \
+              | kubeconform -strict -summary -kubernetes-version 1.29.0 -ignore-missing-schemas
+            echo "::endgroup::"
+          done
 
       - name: Check required values are enforced
         run: |
@@ -78,6 +94,14 @@ jobs:
           }
           expect_failure "blank backend.existingSecret" --set backend.existingSecret=
           expect_failure "ingress enabled with no hosts" --set ingress.hosts=null
+          if helm template d charts/polaris-asset-discovery >/dev/null 2>&1; then
+            echo "::error::expected asset discovery without polaris.url to fail the render"; exit 1
+          fi
+          if helm template d charts/polaris-asset-discovery --set polaris.url=https://x \
+               --set polaris.apiToken=t >/dev/null 2>&1; then
+            echo "::error::expected asset discovery token auth without an organisation to fail"; exit 1
+          fi
+          echo "ok: asset discovery refuses a missing url or organisation"
           expect_failure "missing backend image tag"     --set backend.image.tag=null
           expect_failure "postgres disabled without urlSecret.name" --set postgres.enabled=false
           expect_failure "mobile enabled with no host" --set mobile.enabled=true

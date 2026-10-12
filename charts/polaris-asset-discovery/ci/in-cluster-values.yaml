@@ -1,0 +1,4 @@
+polaris:
+  url: "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000"
+watch:
+  enabled: false

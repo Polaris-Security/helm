@@ -27,3 +27,11 @@ dependencies:
     version: 6.2.4
     repository: "https://charts.bitnami.com/bitnami"
     condition: valkey.enabled
+  # Asset Discovery for the cluster the platform runs in. Vendored from this repository
+  # rather than fetched, so the two always release together. `~0.1.0` accepts the patch
+  # bumps each platform release gives it.
+  - name: polaris-asset-discovery
+    alias: assetDiscovery
+    version: "~0.1.0"
+    repository: "file://../polaris-asset-discovery"
+    condition: assetDiscovery.enabled

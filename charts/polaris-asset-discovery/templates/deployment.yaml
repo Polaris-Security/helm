@@ -1,0 +1,134 @@
+{{- $auth := include "assetDiscovery.authMode" . -}}
+{{- if and (eq $auth "token") (not .Values.polaris.organization) }}
+{{- fail "polaris.organization is required with token auth: the slug of the organisation the cluster belongs to" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "assetDiscovery.fullname" . }}
+  labels:
+    {{- include "assetDiscovery.labels" . | nindent 4 }}
+spec:
+  # One per cluster: two would send the same snapshot twice, harmless but pointless.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "assetDiscovery.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "assetDiscovery.selectorLabels" . | nindent 8 }}
+      {{- $annotations := deepCopy (.Values.podAnnotations | default dict) }}
+      {{- if and (eq $auth "token") (not .Values.polaris.existingSecret) }}
+      {{- $_ := set $annotations "checksum/token" (include (print $.Template.BasePath "/secret.yaml") . | sha256sum) }}
+      {{- end }}
+      {{- with $annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "assetDiscovery.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: asset-discovery
+          image: "{{ .Values.image.repository }}:{{ required "image.tag must be set" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["run"]
+          env:
+            - name: DISCOVERY_MODE
+              value: kubernetes
+            - name: POLARIS_URL
+              value: {{ required "polaris.url must be set to the platform's base URL" (tpl .Values.polaris.url .) | quote }}
+            {{- if .Values.polaris.organization }}
+            - name: POLARIS_ORGANIZATION
+              value: {{ .Values.polaris.organization | quote }}
+            {{- end }}
+            {{- if eq $auth "token" }}
+            - name: POLARIS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "assetDiscovery.tokenSecretName" . }}
+                  key: {{ .Values.polaris.existingSecretKey }}
+            {{- else }}
+            - name: POLARIS_KUBERNETES_TOKEN_PATH
+              value: /var/run/secrets/polaris/token
+            {{- end }}
+            - name: POLARIS_VERIFY_TLS
+              value: {{ .Values.polaris.verifyTls | quote }}
+            - name: REFRESH_INTERVAL
+              value: {{ .Values.refreshInterval | quote }}
+            - name: ASSET_TTL
+              value: {{ .Values.assetTtl | quote }}
+            - name: CLUSTER_NAME
+              value: {{ .Values.clusterName | quote }}
+            - name: WATCH
+              value: {{ .Values.watch.enabled | quote }}
+            - name: WATCH_DEBOUNCE
+              value: {{ .Values.watch.debounce | quote }}
+            - name: PUBLIC_ADDRESSES
+              value: {{ join "," .Values.publicAddresses | quote }}
+            - name: EXCLUDE_NAMESPACES
+              value: {{ join "," .Values.excludeNamespaces | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "polaris_discovery", "healthcheck"]
+            # The first report can take a while on a large cluster.
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if eq $auth "kubernetes" }}
+            - name: polaris-token
+              mountPath: /var/run/secrets/polaris
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if eq $auth "kubernetes" }}
+        # A token for Polaris alone: its audience means the API server would refuse it,
+        # and Polaris refuses a token minted for anyone else. The kubelet rotates it.
+        - name: polaris-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ .Values.polaris.tokenAudience | quote }}
+                  expirationSeconds: 3600
+                  path: token
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

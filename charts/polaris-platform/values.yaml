@@ -473,6 +473,39 @@ monitoring:
     celeryFailureFor: 10m
     crashLoopFor: 10m
 
+# ─── Asset Discovery (polaris-asset-discovery subchart) ───────────────────────
+# Reports the workloads running in this cluster — what runs, which version, and whether a
+# public load balancer or ingress fronts it — to this platform as Workload Assets in the
+# Infrastructure organisation, under the Cluster Asset `clusterName`.
+#
+# No token to create: the discovery pod presents its projected service account token and
+# the backend verifies it with a TokenReview. For that the chart gives the backend web pod
+# its own ServiceAccount bound to `system:auth-delegator` (create TokenReviews, nothing
+# else) and tells it which service account to accept.
+#
+# Every option of the standalone chart works here under `assetDiscovery.` — see
+# charts/polaris-asset-discovery/values.yaml.
+assetDiscovery:
+  enabled: true
+  # A fixed name, because the backend's allowlist has to name the service account.
+  fullnameOverride: polaris-asset-discovery
+  image:
+    repository: docker.io/polarissecurity/asset-discovery
+    tag: 0.99.66
+  polaris:
+    # The backend Service in this release's namespace, which ALLOWED_HOSTS already admits.
+    url: "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000"
+    auth: kubernetes
+    verifyTls: true
+  clusterName: polaris
+  refreshInterval: 5m
+  assetTtl: 24h
+  watch:
+    enabled: true
+  # The polarissecurity images are private: repeat the top-level imagePullSecrets here,
+  # since a subchart does not see its parent's values.
+  imagePullSecrets: []
+
 # ─── Valkey (Celery broker + cache, bitnami subchart) ─────────────────────────
 valkey:
   # false ⇒ subchart is skipped entirely; point REDIS_URL in backend.existingSecret at

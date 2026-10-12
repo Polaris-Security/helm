@@ -1,0 +1,42 @@
+{{- if .Values.rbac.create }}
+# Read-only, and only the kinds discovery looks at. No Secrets, no ConfigMaps, no pod logs
+# or exec: an inventory needs to know what runs, never what it holds.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "assetDiscovery.fullname" . }}
+  labels:
+    {{- include "assetDiscovery.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, services]
+    verbs: [get, list, watch]
+  # Only to read kube-system's UID, the cluster's stable identity.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "assetDiscovery.fullname" . }}
+  labels:
+    {{- include "assetDiscovery.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "assetDiscovery.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "assetDiscovery.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -78,6 +78,10 @@ backend.extraConfig — so a user's extraConfig always wins.
       "ALLOWED_HOSTS" (include "polaris.allowedHosts" .)
       "CSRF_TRUSTED_ORIGINS" (include "polaris.csrfTrustedOrigins" .)
       "POSTHOG_HOST" .Values.posthog.host -}}
+{{- if .Values.assetDiscovery.enabled -}}
+{{- /* Which Kubernetes service account may post Discovery Reports with its own token. */ -}}
+{{- $_ := set $derived "ASSET_DISCOVERY_KUBERNETES_SERVICE_ACCOUNTS" (include "polaris.assetDiscoveryServiceAccount" .) -}}
+{{- end -}}
 {{- $config := merge (deepCopy (.Values.backend.extraConfig | default dict)) (deepCopy (.Values.backend.config | default dict)) $derived -}}
 {{- range $key, $value := $config }}
 {{ $key }}: {{ $value | quote }}
@@ -129,4 +133,21 @@ tolerations:
 affinity:
   {{- toYaml . | nindent 2 }}
 {{- end }}
+{{- end -}}
+
+{{/*
+"<namespace>:<name>" of the Asset Discovery subchart's service account. The subchart names
+it after its fullnameOverride, which values.yaml fixes for exactly this reason.
+*/}}
+{{- define "polaris.assetDiscoveryServiceAccount" -}}
+{{- $sa := .Values.assetDiscovery.serviceAccount | default dict -}}
+{{- printf "%s:%s" .Release.Namespace (default .Values.assetDiscovery.fullnameOverride $sa.name) -}}
+{{- end -}}
+
+{{/*
+The backend web pod's ServiceAccount: its own when Asset Discovery needs it to create
+TokenReviews, else the namespace default as before.
+*/}}
+{{- define "polaris.backendServiceAccount" -}}
+{{- if .Values.assetDiscovery.enabled -}}backend{{- end -}}
 {{- end -}}

@@ -1,0 +1,9 @@
+polaris:
+  url: https://polaris.example.com
+  apiToken: 0123456789abcdef0123456789abcdef01234567
+  organization: acme
+clusterName: k8s-prod
+publicAddresses:
+  - 10.20.0.0/24
+excludeNamespaces:
+  - kube-system

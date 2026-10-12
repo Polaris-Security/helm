@@ -1,0 +1,105 @@
+# Polaris Asset Discovery.
+#
+# Lists every controller with running pods (Deployment, StatefulSet, DaemonSet, CronJob,
+# Job, bare Pod), the images and versions it runs, and the LoadBalancer Services and
+# Ingresses in front of it, and reports the whole snapshot to Polaris on every refresh —
+# and, with `watch.enabled`, whenever something changes. Polaris keeps each workload as a
+# Workload Asset that depends on this cluster's Cluster Asset.
+
+image:
+  repository: docker.io/polarissecurity/asset-discovery
+  tag: 0.99.66
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+polaris:
+  # The platform's base URL. Rendered with `tpl`, so it may refer to the release:
+  # "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000".
+  url: ""
+
+  # How discovery authenticates:
+  #
+  #   token      — a Polaris Service Account token (`apiToken` or `existingSecret`) with
+  #                membership of `organization`. Works against any Polaris install.
+  #   kubernetes — the pod's projected service account token, which Polaris verifies
+  #                with a TokenReview. Only for a cluster the platform itself runs in,
+  #                with this service account allowed by the platform (the polaris
+  #                chart does this for you). Reports into the Infrastructure org unless
+  #                `organization` is set.
+  #   auto       — token when one is configured, else kubernetes.
+  auth: auto
+  apiToken: ""
+  # An existing Secret holding the token, instead of `apiToken`.
+  existingSecret: ""
+  existingSecretKey: api-token
+  # Slug of the organisation the cluster and its workloads belong to. Required with a
+  # token; optional with kubernetes auth.
+  organization: ""
+  # Audience of the projected token; must match the platform's
+  # ASSET_DISCOVERY_KUBERNETES_AUDIENCE.
+  tokenAudience: polaris-asset-discovery
+  verifyTls: true
+
+# How often a full snapshot is sent (300, 90s, 15m, 1h).
+refreshInterval: 5m
+# How long a workload stays in Polaris after the last report that saw it. Must be at
+# least twice refreshInterval. Hours, not the 90 days a Wazuh host gets: containers come
+# and go.
+assetTtl: 24h
+
+# The name of the Cluster Asset. Matches an existing Cluster Asset of that name in the
+# organisation, or creates one. Changing it later does not rename the Asset.
+clusterName: kubernetes
+
+watch:
+  # Report changes as they happen (new workloads, rollouts, new Services/Ingresses)
+  # instead of waiting for the next refresh.
+  enabled: true
+  # Quiet period after a change, so one rollout is one report.
+  debounce: 15s
+
+# Private address ranges that are reachable from the internet through NAT — a MetalLB
+# pool behind the edge firewall, say. Load balancers and ingresses on these count as
+# internet-facing. One object can be settled either way with the annotation
+# `polaris.security/internet-facing: "true"|"false"`.
+publicAddresses: []
+excludeNamespaces: []
+
+logLevel: INFO
+extraEnv: []
+
+serviceAccount:
+  create: true
+  # Defaults to the release's full name.
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]

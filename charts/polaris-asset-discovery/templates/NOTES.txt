@@ -1,0 +1,17 @@
+Polaris Asset Discovery reports this cluster to {{ tpl .Values.polaris.url . }}
+as the Cluster Asset "{{ .Values.clusterName }}"{{ if .Values.polaris.organization }} in organisation "{{ .Values.polaris.organization }}"{{ end }},
+every {{ .Values.refreshInterval }}{{ if .Values.watch.enabled }} and whenever a workload changes{{ end }}.
+
+Check the first report:
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "assetDiscovery.fullname" . }}
+
+Preview what is sent without sending it:
+
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "assetDiscovery.fullname" . }} -- python -m polaris_discovery print
+{{- if eq (include "assetDiscovery.authMode" .) "kubernetes" }}
+
+In-cluster auth: the platform must allow the service account
+"{{ .Release.Namespace }}:{{ include "assetDiscovery.serviceAccountName" . }}" in ASSET_DISCOVERY_KUBERNETES_SERVICE_ACCOUNTS
+and be able to create TokenReviews (the polaris chart sets up both).
+{{- end }}

@@ -21,6 +21,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- with (include "polaris.backendServiceAccount" .) }}
+      serviceAccountName: {{ . }}
+      {{- end }}
       {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.backend.web) | trim) }}
       {{- nindent 6 . }}
       {{- end }}

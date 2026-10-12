@@ -10,7 +10,7 @@ Documentation, product information and support: **https://polaris-security.nl/**
 
 ## What's in here
 
-A single chart, `charts/polaris-platform`, that deploys the whole platform and the
+The main chart, `charts/polaris-platform`, deploys the whole platform and the
 supporting infrastructure it expects:
 
 | Component | What it is |
@@ -26,9 +26,14 @@ supporting infrastructure it expects:
 | `ollama-embed` | Self-hosted Ollama used only for embeddings; chat models run on Ollama Cloud |
 | Monitoring | ServiceMonitors, a celery-exporter, a Grafana dashboard ConfigMap and PrometheusRule alerts for an existing kube-prometheus-stack |
 | external-secrets | Optional `SecretStore`/`ExternalSecret` for pulling backup credentials from Vault |
+| Asset Discovery | The `polaris-asset-discovery` subchart (`assetDiscovery.enabled`, on by default): reports this cluster's workloads, their versions and their exposure to the platform as Workload Assets in the Infrastructure organisation. It authenticates with its Kubernetes service account token, which the backend checks with a TokenReview, so the backend web pod gets its own ServiceAccount bound to `system:auth-delegator` |
 
 Every environment-specific setting lives in `values.yaml`; the templates carry no
 site-specific values.
+
+A second chart, `charts/polaris-asset-discovery`, runs Asset Discovery on its own for a cluster
+the platform does not run in, using a Polaris Service Account token (see that chart's
+`values.yaml`).
 
 ## Requirements
 

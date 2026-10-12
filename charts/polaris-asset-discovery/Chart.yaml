@@ -1,0 +1,22 @@
+apiVersion: v2
+name: polaris-asset-discovery
+description: >-
+  Polaris Asset Discovery — reports the workloads running in a Kubernetes cluster, their
+  versions and how they are exposed, to Polaris as Workload Assets.
+type: application
+# Chart version. Bump on every chart change.
+version: 0.1.0
+# Version of the asset-discovery image this chart defaults to deploying.
+appVersion: "0.99.66"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/Polaris-Security/polaris-helm
+sources:
+  - https://github.com/Polaris-Security/polaris-helm
+  - https://github.com/Polaris-Security/polaris-security/tree/main/asset-discovery
+keywords:
+  - security
+  - inventory
+  - kubernetes
+maintainers:
+  - name: Eddie Vels
+    email: eddie@vels.online
