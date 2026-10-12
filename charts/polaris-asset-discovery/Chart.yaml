@@ -5,7 +5,7 @@ description: >-
   versions and how they are exposed, to Polaris as Workload Assets.
 type: application
 # Chart version. Bump on every chart change.
-version: 0.1.0
+version: 0.1.1
 # Version of the asset-discovery image this chart defaults to deploying.
 appVersion: "0.99.66"
 kubeVersion: ">=1.25.0-0"
