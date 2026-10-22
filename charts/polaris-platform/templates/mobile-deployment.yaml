@@ -3,6 +3,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mobile
+  {{- with .Values.mobile.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.mobile.replicaCount }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
@@ -34,6 +38,10 @@ spec:
           {{- end }}
           {{- with .Values.mobile.resources }}
           resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.mobile.securityContext }}
+          securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- with .Values.mobile.readinessProbe }}

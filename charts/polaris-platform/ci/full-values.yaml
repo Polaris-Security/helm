@@ -1,7 +1,8 @@
 # CI case: everything enabled and overridden away from the defaults. Exercises the
 # multi-host Ingress loop, the external-secrets objects, per-component scheduling and
-# probes, a renamed Postgres cluster (so DATABASE_URL has to follow it) and CPU-only
-# embedding.
+# probes, security contexts, Service annotations, a renamed and pinned Postgres cluster
+# (so DATABASE_URL has to follow it), CPU-only embedding with explicit resources, and a
+# custom Asset Discovery token audience the backend has to follow.
 ingress:
   className: nginx
   hosts:
@@ -14,6 +15,18 @@ ingress:
 mobile:
   enabled: true
   host: mobile.acme.test
+  annotations:
+    team: mobile
+  service:
+    annotations:
+      service.beta.kubernetes.io/internal: "true"
+
+frontend:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+  securityContext:
+    allowPrivilegeEscalation: false
 
 externalSecrets:
   secretStore:
@@ -31,8 +44,18 @@ backend:
   extraConfig:
     LOG_LEVEL: DEBUG
     CUSTOM_FLAG: "yes"
+  service:
+    annotations:
+      prometheus.io/scrape: "false"
+  worker:
+    podSecurityContext:
+      fsGroup: 1000
+    securityContext:
+      allowPrivilegeEscalation: false
   web:
     replicaCount: 3
+    securityContext:
+      allowPrivilegeEscalation: false
     readinessProbe:
       httpGet:
         path: /api/health/
@@ -49,6 +72,11 @@ postgres:
   cluster:
     name: pg-acme
     instances: 3
+    imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
     parameters:
       max_connections: "150"
   backup:
@@ -58,3 +86,20 @@ postgres:
 ollamaEmbed:
   nodeName: gpu-01
   gpuCount: 0
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+
+monitoring:
+  celeryExporter:
+    pullPolicy: IfNotPresent
+    nodeSelector:
+      workload: monitoring
+
+imagePullSecrets:
+  - name: registry-credentials
+
+assetDiscovery:
+  polaris:
+    tokenAudience: acme-discovery

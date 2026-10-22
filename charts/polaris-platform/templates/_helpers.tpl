@@ -81,6 +81,9 @@ backend.extraConfig — so a user's extraConfig always wins.
 {{- if .Values.assetDiscovery.enabled -}}
 {{- /* Which Kubernetes service account may post Discovery Reports with its own token. */ -}}
 {{- $_ := set $derived "ASSET_DISCOVERY_KUBERNETES_SERVICE_ACCOUNTS" (include "polaris.assetDiscoveryServiceAccount" .) -}}
+{{- /* The audience the subchart mints its projected token for; the two must match. */ -}}
+{{- $discovery := .Values.assetDiscovery.polaris | default dict -}}
+{{- $_ := set $derived "ASSET_DISCOVERY_KUBERNETES_AUDIENCE" ($discovery.tokenAudience | default "polaris-asset-discovery") -}}
 {{- end -}}
 {{- $config := merge (deepCopy (.Values.backend.extraConfig | default dict)) (deepCopy (.Values.backend.config | default dict)) $derived -}}
 {{- range $key, $value := $config }}
@@ -108,8 +111,8 @@ Image reference for the backend image, shared by web/worker/beat.
 {{- end -}}
 
 {{/*
-Pod-level settings shared by every workload: image pull secrets and the component's
-scheduling directives. Each block is omitted when unset, and the whole include collapses
+Pod-level settings shared by every workload: image pull secrets, the component's pod
+security context and its scheduling directives. Each block is omitted when unset, and the whole include collapses
 to nothing when none apply.
 
 Usage: {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.frontend) | trim) }}
@@ -119,6 +122,10 @@ Usage: {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.fr
 {{- define "polaris.podSpec" -}}
 {{- with .root.Values.imagePullSecrets }}
 imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .component.podSecurityContext }}
+securityContext:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- with .component.nodeSelector }}

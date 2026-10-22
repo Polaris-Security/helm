@@ -16,13 +16,20 @@ spec:
     metadata:
       labels:
         app: celery-exporter
+      {{- with .Values.monitoring.celeryExporter.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
-      {{- with (include "polaris.podSpec" (dict "root" . "component" dict) | trim) }}
+      {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.monitoring.celeryExporter) | trim) }}
       {{- nindent 6 . }}
       {{- end }}
       containers:
         - name: celery-exporter
           image: {{ .Values.monitoring.celeryExporter.image }}
+          {{- with .Values.monitoring.celeryExporter.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.monitoring.celeryExporter.port }}

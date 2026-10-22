@@ -5,6 +5,10 @@ metadata:
   name: mobile
   labels:
     app: mobile
+  {{- with .Values.mobile.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.mobile.service.type }}
   selector:

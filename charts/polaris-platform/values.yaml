@@ -8,6 +8,12 @@
 #   imagePullSecrets       credentials for the private polarissecurity/* images
 #   postgres               bring-your-own database, or let CNPG provision one
 #   externalSecrets        only if you use external-secrets.io
+#   backend.config         FRONTEND_URL, DEFAULT_FROM_EMAIL and VAPID_SUBJECT default to
+#                          vels.online addresses in the backend; set them for your install
+#
+# The backend reads many more settings than are listed below. The README's "Backend
+# settings" section is the full reference: every variable, its default, and whether it
+# belongs in the Secret or in backend.config.
 #
 # ─── Backend ──────────────────────────────────────────────────────────────────
 backend:
@@ -40,14 +46,30 @@ backend:
   # NOTE: this ConfigMap is listed *after* the Secret in envFrom, so any key set here
   # overrides the same key in backend.existingSecret. Keep secrets out of it.
   config:
+    # Django debug mode. The worker and beat tiers override this through extraEnv below.
     DEBUG: "False"
 
     # Set this to the full base URL of the install, used among other things for setting up peerings with other Polaris installs.
     DEPLOYMENT_BASE_URL: ""
+    # This deployment's display name, shown to peers.
     DEPLOYMENT_NAME: "Polaris Security"
 
+    # The backend defaults these to vels.online addresses. Set them on any other install:
+    # FRONTEND_URL is the base of every link in outgoing email, DEFAULT_FROM_EMAIL is the
+    # sender (and the reply-handle domain unless INBOUND_REPLY_DOMAIN is set), and
+    # VAPID_SUBJECT is the contact address sent with web-push messages.
+    #   FRONTEND_URL: https://polaris.example.com
+    #   DEFAULT_FROM_EMAIL: noreply@example.com
+    #   VAPID_SUBJECT: mailto:admin@example.com
+
+    # Skip TLS certificate verification when sending mail. Only for an SMTP relay with a
+    # self-signed certificate; set "False" when yours has a valid one. The SMTP host,
+    # port and credentials (EMAIL_HOST, EMAIL_PORT, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD)
+    # belong in backend.existingSecret.
     EMAIL_SSL_NO_VERIFY: "True"
+    # Tags telemetry so production is distinguishable from dev/staging in PostHog.
     ENVIRONMENT: production
+    # Console log level for every backend pod.
     LOG_LEVEL: INFO
 
     # Reverse proxy in front of the platform, used to build absolute URLs.
@@ -64,7 +86,12 @@ backend:
     # capable. Chat runs here; embeddings run on the in-cluster ollamaEmbed below.
     OLLAMA_MODEL: gpt-oss:120b-cloud
 
+    # When a triaged incident is assigned to the on-call analyst: "always" assigns every
+    # one; "llm_guided" only those triage recommends escalating or assigning.
     ONCALL_ROUTING: llm_guided
+    # LLM provider class per feature, as a dotted path. Each defaults to the Ollama
+    # provider; HARVEST_LLM_PROVIDER (Dossier Harvest) is also available and defaults to
+    # the triage provider.
     EXCEPTION_LLM_PROVIDER: exceptions.llm.ollama.OllamaProvider
     TRIAGE_LLM_PROVIDER: incidents.llm.ollama.OllamaTriageProvider
     CORRELATION_LLM_PROVIDER: correlations.llm.ollama.OllamaDraftProvider
@@ -81,20 +108,24 @@ backend:
 
     # Must be set for the knowledge exchange feature to do anything; the catalog reports itself unconfigured and stays empty otherwise
     KNOWLEDGE_EXCHANGE_REPO: "Polaris-Security/exchange"
+    # Matched-document volume over the backtest at or above which an organisation is
+    # pre-selected for Mute when an imported rule is enabled.
     KNOWLEDGE_EXCHANGE_PREMUTE_THRESHOLD: "100"
 
     # Setup the connection to Pulsegrid for monitoring services.
     PULSEGRID_BASE_URL: ""
     PULSEGRID_ORG_ID: ""
 
-    ASSISTANT_LOOP_MAX_ITERATIONS: 10
-    
-    # Triage Agent Work-phase loop caps (ADR-0024/0025). Like a Hunt this runs in a Celery                                                                             
-    # worker, so nothing but these caps bounds it. An incident that needs more research than                                                                           
-    # the cap allows stops mid-work with stop_reason = max_iterations, so the ceiling is an                                                                            
-    # operational knob: raise it from the environment when real incidents keep hitting it,                                                                             
-    # without a release. The deadline is a second, independent bound — raising the iteration                                                                           
-    # ceiling alone does nothing once a run is long enough to hit the wall clock first.   
+    # Incident Assistant: most model/tool iterations in one turn. Hitting it is a soft
+    # checkpoint the analyst can Continue from.
+    ASSISTANT_LOOP_MAX_ITERATIONS: "10"
+
+    # Triage Agent Work-phase loop caps (ADR-0024/0025). Like a Hunt this runs in a Celery
+    # worker, so nothing but these caps bounds it. An incident that needs more research than
+    # the cap allows stops mid-work with stop_reason = max_iterations, so the ceiling is an
+    # operational knob: raise it from the environment when real incidents keep hitting it,
+    # without a release. The deadline is a second, independent bound — raising the iteration
+    # ceiling alone does nothing once a run is long enough to hit the wall clock first.
     TRIAGE_AGENT_LOOP_MAX_ITERATIONS: 15
     TRIAGE_AGENT_LOOP_DEADLINE_S: 300
 
@@ -117,14 +148,20 @@ backend:
     # so the chart does not guess one.
     livenessProbe: {}
     readinessProbe: {}
+    # Pod- and container-level security contexts. Empty ⇒ none set. The container
+    # context also applies to the migrate init container and the metrics sidecar.
+    podSecurityContext: {}
+    securityContext: {}
     nodeSelector: {}
     tolerations: []
     affinity: {}
+    # Extra environment variables for the web container only, as a list of EnvVar
+    # objects. Takes precedence over backend.config and the Secret for this container.
     extraEnv: []
 
   worker:
     replicaCount: 1
-    annotations: 
+    annotations:
       configmap.reloader.stakater.com/reload: "backend-config"
     podAnnotations: {}
     resources:
@@ -132,6 +169,8 @@ backend:
         memory: 1024Mi
       limits:
         memory: 3096Mi
+    podSecurityContext: {}
+    securityContext: {}
     nodeSelector: {}
     tolerations: []
     affinity: {}
@@ -145,12 +184,14 @@ backend:
   beat:
     # More than one beat replica double-schedules every periodic task. Keep at 1.
     replicaCount: 1
-    annotations: 
+    annotations:
       configmap.reloader.stakater.com/reload: "backend-config"
     podAnnotations: {}
     resources:
       requests:
         memory: 256Mi
+    podSecurityContext: {}
+    securityContext: {}
     nodeSelector: {}
     tolerations: []
     affinity: {}
@@ -158,9 +199,11 @@ backend:
       - name: DEBUG
         value: "True"
 
+  # The `backend` Service the Ingress routes to. Its name is fixed (see README, Notes).
   service:
     type: ClusterIP
     port: 8000
+    annotations: {}
 
 # ─── Frontend ─────────────────────────────────────────────────────────────────
 frontend:
@@ -169,6 +212,8 @@ frontend:
     tag: 0.99.77
     pullPolicy: Always
   replicaCount: 1
+  # Annotations on the Deployment, and on its pods.
+  annotations: {}
   podAnnotations: {}
   resources: {}
   readinessProbe:
@@ -183,13 +228,19 @@ frontend:
       port: 80
     initialDelaySeconds: 10
     periodSeconds: 20
+  podSecurityContext: {}
+  securityContext: {}
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The image is a static bundle served by nginx: the API base, Turnstile site key and
+  # PostHog project are baked in at build time, so environment variables set here do
+  # not change them.
   extraEnv: []
   service:
     type: ClusterIP
     port: 80
+    annotations: {}
 
 # ─── Mobile PWA ───────────────────────────────────────────────────────────────
 # The phone app: an incident queue that opens into the Incident Assistant as a chat.
@@ -208,6 +259,7 @@ mobile:
     tag: 0.99.9
     pullPolicy: Always
   replicaCount: 1
+  annotations: {}
   podAnnotations: {}
   resources: {}
   readinessProbe:
@@ -222,13 +274,19 @@ mobile:
       port: 80
     initialDelaySeconds: 10
     periodSeconds: 20
+  podSecurityContext: {}
+  securityContext: {}
   nodeSelector: {}
   tolerations: []
   affinity: {}
+  # The image is a static bundle served by nginx: the API base, Turnstile site key and
+  # PostHog project are baked in at build time, so environment variables set here do
+  # not change them.
   extraEnv: []
   service:
     type: ClusterIP
     port: 80
+    annotations: {}
 
 # Docker Hub pull credentials for the private polarissecurity/* repositories.
 # Create with: kubectl create secret docker-registry registry-credentials \
@@ -236,6 +294,9 @@ mobile:
 #   --docker-password=<access-token>
 imagePullSecrets: []
 
+# Also applied to ollama-embed and the celery-exporter. The assetDiscovery subchart has
+# its own copy (assetDiscovery.imagePullSecrets).
+#
 # Deployments to keep for rollback, across every workload in the chart.
 revisionHistoryLimit: 2
 
@@ -278,12 +339,24 @@ postgres:
   enabled: true
   # Requires the CloudNativePG operator in the cluster.
   cluster:
+    # Also names the generated "<name>-app" Secret the backend reads DATABASE_URL from.
     name: cluster-polaris
+    # Postgres instances: one primary, the rest streaming replicas.
     instances: 2
+    # Database and owning role created at initdb (and expected inside a restored backup).
     database: polaris
     owner: polaris
+    # Postgres operand image, e.g. ghcr.io/cloudnative-pg/postgresql:16.4. Empty ⇒ the
+    # operator's default for its version. Changing the major version needs a CNPG
+    # major-upgrade procedure, not just a new tag.
+    imageName: ""
+    # Requests/limits for each Postgres instance pod. Empty ⇒ none set.
+    resources: {}
     storage:
+      # Per-instance PVC size. CNPG can grow it in place if the storage class allows
+      # expansion; it cannot shrink it.
       size: 10Gi
+      # Empty ⇒ the cluster's default StorageClass.
       storageClass: local-path
     # postgresql.conf settings, applied for real by CNPG (values must be strings).
     # Empty by default: changing a postmaster-level setting such as max_connections
@@ -308,6 +381,7 @@ postgres:
   # Requires the barman-cloud CNPG plugin installed in the cluster.
   backup:
     enabled: true
+    # Name of the barman-cloud ObjectStore object the chart creates.
     objectStoreName: minio-store
     # Name this cluster archives its WAL and base backups under, inside destinationPath.
     # Empty ⇒ cluster.name, which is almost always what you want — including when
@@ -315,9 +389,12 @@ postgres:
     # Set it to fork a restored cluster off into its own archive prefix instead; see
     # "Restoring from backup" in the README for when that is worth doing.
     serverName: ""
+    # Bucket (and optional prefix) to archive into, and the S3-compatible endpoint.
     destinationPath: s3://REPLACE-ME-cnpg-backups/
     endpointURL: https://s3.eu-central-1.wasabisys.com
+    # How long base backups and WAL are kept, e.g. "14d", "4w".
     retentionPolicy: "14d"
+    # WAL compression (gzip, bzip2, snappy) and how many segments upload in parallel.
     walCompression: gzip
     walMaxParallel: 8
     # CNPG cron: seconds minutes hours dom month dow. Default = 00:09 every day.
@@ -370,7 +447,10 @@ externalSecrets:
   secretStore:
     enabled: false
     name: vault-backend
+    # How often ExternalSecrets re-read the vault.
     refreshInterval: 120s
+    # Only the Vault provider with Kubernetes auth is templated. For anything else,
+    # leave this disabled and point backupCredentials.secretStoreRef at your own store.
     vault:
       server: http://vault.vault:8200
       path: kv
@@ -388,6 +468,7 @@ externalSecrets:
     # Name of the store to read from. Empty ⇒ externalSecrets.secretStore.name.
     secretStoreRef:
       name: ""
+      # SecretStore or ClusterSecretStore.
       kind: SecretStore
 
 # ─── Telemetry ────────────────────────────────────────────────────────────────
@@ -418,6 +499,12 @@ ollamaEmbed:
   # 0 ⇒ no nvidia.com/gpu limit, i.e. CPU-only embedding (slow but portable).
   gpuCount: 1
   memoryRequest: 1Gi
+  # Full requests/limits block. Set it to take control of resources: it replaces
+  # memoryRequest and gpuCount, so include nvidia.com/gpu yourself if you need a GPU.
+  resources: {}
+  podAnnotations: {}
+  # Embedding model pulled on start. The backend's own OLLAMA_EMBED_MODEL (default
+  # nomic-embed-text) must name the same model.
   model: nomic-embed-text
   image:
     # Public image; mirror into a registry the cluster can reach if Docker Hub is
@@ -429,6 +516,7 @@ ollamaEmbed:
     pullPolicy: ""
   service:
     port: 11434
+  # Model cache. false ⇒ an emptyDir, so every restart downloads the model again.
   persistence:
     enabled: true
     size: 5Gi
@@ -454,23 +542,38 @@ monitoring:
   # Ship the starter Grafana dashboard ConfigMap.
   dashboard:
     enabled: true
+  # Celery metrics from the broker's task events. Reads REDIS_URL from
+  # backend.existingSecret.
   celeryExporter:
     enabled: true
+    # Full image reference, repository and tag together.
     image: ghcr.io/danihodovic/celery-exporter:0.12.2
+    # Empty ⇒ the Kubernetes default for the tag.
+    pullPolicy: ""
     port: 9808
     resources:
       requests:
         memory: 128Mi
+    podAnnotations: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
   # PrometheusRule alerts. Thresholds are the ones the platform was tuned with.
   alerts:
     enabled: true
+    # BackendMetricsDown (critical): the metrics sidecar has been unscrapeable this long.
     backendMetricsDownFor: 5m
+    # BackendHigh5xxRate (warning): share of HTTP responses that are 5xx (0.05 = 5%),
+    # sustained this long.
     high5xxRatio: 0.05
     high5xxFor: 10m
+    # CeleryTaskBacklog (warning): total queued tasks above this, sustained this long.
     celeryBacklogThreshold: 100
     celeryBacklogFor: 15m
+    # CeleryHighFailureRate (warning): share of received tasks that failed (0.1 = 10%).
     celeryFailureRatio: 0.1
     celeryFailureFor: 10m
+    # PodCrashLooping (critical): any container in the namespace in CrashLoopBackOff.
     crashLoopFor: 10m
 
 # ─── Asset Discovery (polaris-asset-discovery subchart) ───────────────────────
@@ -497,11 +600,16 @@ assetDiscovery:
     url: "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000"
     auth: kubernetes
     verifyTls: true
+  # Name of the Cluster Asset the workloads hang under.
   clusterName: polaris
+  # How often a full snapshot is sent, and how long a workload outlives its last report.
   refreshInterval: 5m
   assetTtl: 24h
+  # Also report changes as they happen, between full snapshots.
   watch:
     enabled: true
+  # The backend's ASSET_DISCOVERY_KUBERNETES_AUDIENCE is derived from
+  # assetDiscovery.polaris.tokenAudience, so change the audience only there.
   # The polarissecurity images are private: repeat the top-level imagePullSecrets here,
   # since a subchart does not see its parent's values.
   imagePullSecrets: []
@@ -511,12 +619,18 @@ valkey:
   # false ⇒ subchart is skipped entirely; point REDIS_URL in backend.existingSecret at
   # your own Redis/Valkey.
   enabled: true
+  # Any value of the bitnami/valkey 6.2.4 chart can be set under this key; only the
+  # ones the platform depends on are listed. See that chart's values.yaml.
   architecture: standalone
   auth:
     enabled: true
+    # Secret holding the Valkey password. The chart does not create it; the password
+    # must match the one inside REDIS_URL in backend.existingSecret.
     existingSecret: "valkey-secret"
     existingSecretPasswordKey: "valkey-password"
   primary:
+    # Off: Valkey is a broker and cache here, and a restart only loses queued tasks
+    # and cached values. Turn on if queued tasks must survive a restart.
     persistence:
       enabled: false
   # Reuse the off-the-shelf Valkey metrics exporter and let the operator scrape it

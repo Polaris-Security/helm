@@ -13,6 +13,13 @@ metadata:
   name: {{ .Values.postgres.cluster.name }}
 spec:
   instances: {{ .Values.postgres.cluster.instances }}
+  {{- with .Values.postgres.cluster.imageName }}
+  imageName: {{ . }}
+  {{- end }}
+  {{- with .Values.postgres.cluster.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   storage:
     size: {{ .Values.postgres.cluster.storage.size }}
     {{- with .Values.postgres.cluster.storage.storageClass }}

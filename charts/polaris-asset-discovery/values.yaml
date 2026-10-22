@@ -13,6 +13,12 @@ image:
 
 imagePullSecrets: []
 
+# Name for every object the chart creates (Deployment, ServiceAccount, ClusterRole, token
+# Secret). Empty ⇒ "<release>-polaris-asset-discovery", or the release name when it already
+# contains the chart name. The polaris chart fixes it, because the platform's allowlist has
+# to name the service account.
+fullnameOverride: ""
+
 polaris:
   # The platform's base URL. Rendered with `tpl`, so it may refer to the release:
   # "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000".

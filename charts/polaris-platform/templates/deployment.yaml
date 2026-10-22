@@ -32,6 +32,10 @@ spec:
           image: {{ include "polaris.backendImage" . }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["python", "manage.py", "migrate", "--noinput"]
+          {{- with .Values.backend.web.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "polaris.backendSecretName" . }}
@@ -73,6 +77,10 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- with .Values.backend.web.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.backend.web.readinessProbe }}
           readinessProbe:
             {{- toYaml . | nindent 12 }}
@@ -93,6 +101,10 @@ spec:
           image: {{ include "polaris.backendImage" . }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           command: ["python", "metrics_exporter.py"]
+          {{- with .Values.backend.web.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.monitoring.metricsPort }}

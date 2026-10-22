@@ -22,7 +22,15 @@ spec:
     metadata:
       labels:
         app: ollama-embed
+      {{- with .Values.ollamaEmbed.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.ollamaEmbed.nodeSelector }}
       nodeSelector:
         {{- toYaml .Values.ollamaEmbed.nodeSelector | nindent 8 }}
@@ -70,12 +78,16 @@ spec:
             - name: http
               containerPort: 11434
           resources:
+          {{- if .Values.ollamaEmbed.resources }}
+            {{- toYaml .Values.ollamaEmbed.resources | nindent 12 }}
+          {{- else }}
             requests:
               memory: {{ .Values.ollamaEmbed.memoryRequest | quote }}
             {{- if gt (int .Values.ollamaEmbed.gpuCount) 0 }}
             limits:
               nvidia.com/gpu: {{ .Values.ollamaEmbed.gpuCount }}
             {{- end }}
+          {{- end }}
           readinessProbe:
             httpGet:
               path: /
