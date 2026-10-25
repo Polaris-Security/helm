@@ -19,7 +19,7 @@
 backend:
   image:
     repository: docker.io/polarissecurity/backend
-    tag: 0.99.78
+    tag: 0.99.79
     pullPolicy: Always
   # Name of an existing Secret holding the backend's environment variables. Every key in
   # it is injected with envFrom into the backend web/migrate, celery-worker and
@@ -209,7 +209,7 @@ backend:
 frontend:
   image:
     repository: docker.io/polarissecurity/frontend
-    tag: 0.99.78
+    tag: 0.99.79
     pullPolicy: Always
   replicaCount: 1
   # Annotations on the Deployment, and on its pods.
@@ -594,7 +594,7 @@ assetDiscovery:
   fullnameOverride: polaris-asset-discovery
   image:
     repository: docker.io/polarissecurity/asset-discovery
-    tag: 0.99.78
+    tag: 0.99.79
   polaris:
     # The backend Service in this release's namespace, which ALLOWED_HOSTS already admits.
     url: "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000"

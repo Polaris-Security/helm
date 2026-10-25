@@ -5,9 +5,9 @@ description: >-
   versions and how they are exposed, to Polaris as Workload Assets.
 type: application
 # Chart version. Bump on every chart change.
-version: 0.1.13
+version: 0.1.14
 # Version of the asset-discovery image this chart defaults to deploying.
-appVersion: "0.99.78"
+appVersion: "0.99.79"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/Polaris-Security/polaris-helm
 sources:
