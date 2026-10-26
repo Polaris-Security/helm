@@ -19,8 +19,7 @@ supporting infrastructure it expects:
 | `celery-worker` | Celery workers for background processing |
 | `celery-beat` | Periodic task scheduler (single replica by design) |
 | `frontend` | SPA served over HTTP |
-| `mobile` | The mobile PWA, on its own hostname (optional — `mobile.enabled`) |
-| Ingress | One Ingress routing `/api/`, `/django-admin/`, `/static/`, `/auth/` and friends to the backend, everything else to the frontend — and, when `mobile.enabled`, the same prefixes on `mobile.host`, its `apple-app-site-association` from the frontend, and the PWA as its catch-all |
+| Ingress | One Ingress routing `/api/`, `/django-admin/`, `/static/`, `/auth/` and friends to the backend, everything else to the frontend |
 | PostgreSQL | A CloudNativePG `Cluster` (optional), with S3/WAL archiving and scheduled backups via the barman-cloud plugin |
 | Valkey | Celery broker and cache, via the Bitnami subchart (optional) |
 | `ollama-embed` | Self-hosted Ollama used only for embeddings; chat models run on Ollama Cloud |
@@ -92,7 +91,6 @@ Before a first install, review at least:
 | `postgres.backup.destinationPath` | Ships as `s3://REPLACE-ME-cnpg-backups/`. |
 | `postgres.recovery` | Off by default. Turn on only to restore a *new* cluster from the object store — see [Restoring from backup](#restoring-from-backup). |
 | `externalSecrets` | Only if you pull secrets from a vault. |
-| `mobile.enabled` / `mobile.host` | The mobile PWA and the hostname it answers on. Off by default; enabling it without a host fails the render. The host joins the derived `allowedHosts`/`csrfTrustedOrigins` and the Ingress `tls` block, so declare it only here. |
 | `backend.config.DEPLOYMENT_BASE_URL` | The externally reachable origin of this install's API. Peering invites refuse to mint until it is set. |
 | `FRONTEND_URL`, `DEFAULT_FROM_EMAIL`, `VAPID_SUBJECT` | The backend defaults all three to `vels.online` addresses. Unless you set them (in `backend.config`), outgoing email links to and is sent from the wrong site. |
 | `backend.existingSecret` contents | Which keys the integrations you use need — see [Backend settings](#backend-settings). |
@@ -100,24 +98,12 @@ Before a first install, review at least:
 `values.yaml` is commented throughout — read it as the reference for every chart value.
 The backend's own settings are listed under [Backend settings](#backend-settings).
 
-### The mobile PWA
+### The iOS app
 
-`mobile.enabled` adds a Deployment, a Service and a second Ingress rule on `mobile.host`.
-That rule sends the same `ingress.backendPaths` to the backend as the main host does,
-`/.well-known/apple-app-site-association` to the frontend, and everything else to the PWA
-bundle. The association file comes from the frontend because that image is rebuilt every
-release and the mobile image is not. The iOS app's Authentik sign-in depends on the file's
-`webcredentials` entry being current on `mobile.host`.
-
-`/auth/` matters as much as `/api/` here. The app signs people in over OIDC and exchanges
-the resulting Django session for an API token, which only works while the whole round trip
-stays on `mobile.host` — the session cookie has to be first-party to the app that reads
-it. Two things outside the chart have to agree:
-
-- the TLS certificate must cover `mobile.host` (the chart lists it under `tls`, but a
-  cert-manager `Certificate` you manage yourself needs the SAN adding), and
-- the identity provider must accept
-  `https://<mobile.host>/auth/oidc/authentik/login/callback/` as a redirect URI.
+The iOS app talks to the same Ingress as the browser: `/api/` and `/auth/` reach the
+backend, and the frontend serves `/.well-known/apple-app-site-association`, whose
+`applinks` and `webcredentials` entries the app's universal links and Authentik sign-in
+depend on. A hostname the app is associated with only has to be one of `ingress.hosts`.
 
 ## Backend settings
 
@@ -136,7 +122,7 @@ yourself:
 
 | Key | Derived from |
 | --- | --- |
-| `ALLOWED_HOSTS` | `backend.allowedHosts`, else `ingress.hosts` + `mobile.host` + the in-cluster Service name |
+| `ALLOWED_HOSTS` | `backend.allowedHosts`, else `ingress.hosts` + the in-cluster Service name |
 | `CSRF_TRUSTED_ORIGINS` | `backend.csrfTrustedOrigins`, else `https://` + each of those hosts |
 | `POSTHOG_HOST` | `posthog.host` |
 | `DATABASE_URL` | `postgres.urlSecret` (set directly on each container, not via the ConfigMap) |
@@ -322,11 +308,11 @@ Deployment-wide maximums: an Operative's own `limits` may ask for less, never mo
 | `WORK_PACKAGE_CRON_SCHEDULE` / `INCIDENT_DIGEST_CRON_SCHEDULE` | `0 6 * * 1` / `0 7 * * *` | **First install only.** Read by the migration that seeds the periodic tasks, so changing them later does nothing — edit the schedule in Django admin instead. |
 | `EXCEPTION_CANDIDATE_MIN_EVIDENCE` / `_LOOKBACK_DAYS` / `_RECENCY_DAYS` | `3` / `90` / `30` | Exception Candidate thresholds. For test and staging installs only. |
 
-### Frontend and mobile images
+### Frontend image
 
-The frontend and mobile images are static bundles. Their settings — API base, PostHog
+The frontend image is a static bundle. Its settings — API base, PostHog
 project and host, Turnstile site key — are baked in at build time, so `frontend.extraEnv`
-and `mobile.extraEnv` cannot change them, and `posthog.host` applies to the backend only.
+cannot change them, and `posthog.host` applies to the backend only.
 
 ## Restoring from backup
 

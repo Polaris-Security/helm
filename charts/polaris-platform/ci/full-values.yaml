@@ -11,16 +11,6 @@ ingress:
   tls:
     secretName: polaris-tls
 
-# Exercises the PWA's Deployment, Service and its own Ingress rule.
-mobile:
-  enabled: true
-  host: mobile.acme.test
-  annotations:
-    team: mobile
-  service:
-    annotations:
-      service.beta.kubernetes.io/internal: "true"
-
 frontend:
   podSecurityContext:
     runAsNonRoot: true
