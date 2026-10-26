@@ -3,6 +3,39 @@ entries:
   polaris:
   - apiVersion: v2
     appVersion: 0.99.79
+    created: "2026-10-26T10:16:58.914943824Z"
+    dependencies:
+    - condition: valkey.enabled
+      name: valkey
+      repository: https://charts.bitnami.com/bitnami
+      version: 6.2.4
+    - alias: assetDiscovery
+      condition: assetDiscovery.enabled
+      name: polaris-asset-discovery
+      repository: file://../polaris-asset-discovery
+      version: ~0.1.0
+    description: Polaris Security platform — Django/Celery backend, SPA frontend and
+      the supporting Postgres, Valkey, embedding and observability components.
+    digest: 1a69ec05062671eccf2d5e3e0e94472a4949d8304057cf059d62fc7e5ba0b12b
+    home: https://github.com/Polaris-Security/polaris-helm
+    keywords:
+    - security
+    - incident-response
+    - django
+    - celery
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - email: eddie@vels.online
+      name: Eddie Vels
+    name: polaris
+    sources:
+    - https://github.com/Polaris-Security/polaris-helm
+    type: application
+    urls:
+    - https://github.com/Polaris-Security/helm/releases/download/polaris-1.1.139/polaris-1.1.139.tgz
+    version: 1.1.139
+  - apiVersion: v2
+    appVersion: 0.99.79
     created: "2026-10-25T19:19:50.140060696Z"
     dependencies:
     - condition: valkey.enabled
@@ -4263,4 +4296,4 @@ entries:
     urls:
     - https://github.com/Polaris-Security/helm/releases/download/polaris-asset-discovery-0.1.0/polaris-asset-discovery-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-25T19:19:50.356716952Z"
+generated: "2026-10-26T10:16:58.915273218Z"
