@@ -24,6 +24,7 @@ supporting infrastructure it expects:
 | Valkey | Celery broker and cache, via the Bitnami subchart (optional) |
 | `ollama-embed` | Self-hosted Ollama used only for embeddings; chat models run on Ollama Cloud |
 | Monitoring | ServiceMonitors, a celery-exporter, a Grafana dashboard ConfigMap and PrometheusRule alerts for an existing kube-prometheus-stack |
+| GeoLite2-ASN | Optional (`geoip.enabled`): a `geoipupdate` init container and refreshing sidecar on the backend web and celery-worker pods that provide the MaxMind GeoLite2-ASN database the Network Clusterer groups attacker IPs by — see [GeoLite2-ASN](#geolite2-asn) |
 | external-secrets | Optional `SecretStore`/`ExternalSecret` for pulling backup credentials from Vault |
 | Asset Discovery | The `polaris-asset-discovery` subchart (`assetDiscovery.enabled`, on by default): reports this cluster's workloads, their versions and their exposure to the platform as Workload Assets in the Infrastructure organisation. It authenticates with its Kubernetes service account token, which the backend checks with a TokenReview, so the backend web pod gets its own ServiceAccount bound to `system:auth-delegator` |
 
@@ -129,6 +130,7 @@ yourself:
 | `ASSET_DISCOVERY_KUBERNETES_SERVICE_ACCOUNTS` | the Asset Discovery subchart's service account, when `assetDiscovery.enabled` |
 | `ASSET_DISCOVERY_KUBERNETES_AUDIENCE` | `assetDiscovery.polaris.tokenAudience`, when `assetDiscovery.enabled` |
 | `RELEASE`, `SERVICE_NAME` | the backend image tag and the tier, for telemetry |
+| `PERIMETER_DEFENCE_GEOLITE2_ASN_PATH` | `geoip.mountPath`, on the web and worker containers when `geoip.enabled` (see [GeoLite2-ASN](#geolite2-asn)) |
 
 Everything else is listed below. **S** marks a credential that belongs in the Secret;
 the rest go in `backend.config`. Unset integrations stay off: the features that need
@@ -308,6 +310,47 @@ Deployment-wide maximums: an Operative's own `limits` may ask for less, never mo
 | `WORK_PACKAGE_CRON_SCHEDULE` / `INCIDENT_DIGEST_CRON_SCHEDULE` | `0 6 * * 1` / `0 7 * * *` | **First install only.** Read by the migration that seeds the periodic tasks, so changing them later does nothing — edit the schedule in Django admin instead. |
 | `EXCEPTION_CANDIDATE_MIN_EVIDENCE` / `_LOOKBACK_DAYS` / `_RECENCY_DAYS` | `3` / `90` / `30` | Exception Candidate thresholds. For test and staging installs only. |
 
+### GeoLite2-ASN
+
+The Network Clusterer groups attacker IPs by ASN, read from a MaxMind GeoLite2-ASN
+database. Without one the clusters are prefix-only. To have the chart provide it, create
+a free [MaxMind account](https://www.maxmind.com/en/geolite2/signup), generate a license
+key, add both to the backend Secret and turn it on:
+
+```sh
+kubectl create secret generic backend-secret --from-env-file=.env  # with these two keys:
+#   GEOIPUPDATE_ACCOUNT_ID=<account id>
+#   GEOIPUPDATE_LICENSE_KEY=<license key>
+```
+
+```yaml
+geoip:
+  enabled: true
+```
+
+The web and celery-worker pods (not beat) then get a `geoip-init` init container that
+downloads the database into a shared `emptyDir` before the backend starts, a
+`geoipupdate` sidecar that downloads it again every `geoip.frequencyHours` (72 by
+default), a read-only mount of the volume at `geoip.mountPath`, and
+`PERIMETER_DEFENCE_GEOLITE2_ASN_PATH` pointing at `GeoLite2-ASN.mmdb` in it.
+
+| Value | Default | Purpose |
+| --- | --- | --- |
+| `geoip.enabled` | `false` | Provision the database. |
+| `geoip.image.repository` / `.tag` / `.pullPolicy` | `ghcr.io/maxmind/geoipupdate` / `v7.1.1` / `IfNotPresent` | The geoipupdate image. |
+| `geoip.editionIds` | `GeoLite2-ASN` | Space-separated editions to download. Must include `GeoLite2-ASN`. |
+| `geoip.frequencyHours` | `72` | Hours between downloads in the sidecar. `0` drops the sidecar: one download per pod start. |
+| `geoip.mountPath` | `/geoip` | Where the volume is mounted. |
+| `geoip.existingSecret` | `backend.existingSecret` | Secret holding the credentials. Only the two keys below are read from it. |
+| `geoip.accountIdKey` / `geoip.licenseKeyKey` | `GEOIPUPDATE_ACCOUNT_ID` / `GEOIPUPDATE_LICENSE_KEY` | Keys in that Secret. |
+| `geoip.resources` / `geoip.securityContext` | small requests; no privilege escalation, all capabilities dropped | For both geoipupdate containers. |
+
+Both containers fail open: a failed download (wrong credentials, missing Secret keys, no
+egress to `updates.maxmind.com`) is logged, the pod still starts, and the sidecar retries
+hourly. The backend picks the file up when it appears and clusters by prefix only until
+then. If the clusters stay prefix-only, check `kubectl logs <pod> -c geoip-init` and
+`-c geoipupdate`.
+
 ### Frontend image
 
 The frontend image is a static bundle. Its settings — API base, PostHog
@@ -404,7 +447,9 @@ helm template polaris charts/polaris-platform -f my-values.yaml
 
 `charts/polaris-platform/ci/*-values.yaml` hold the configurations CI renders on every
 push: `minimal-values.yaml` (every optional dependency disabled, external database) and
-`full-values.yaml` (multi-host Ingress, external-secrets, per-component scheduling).
+`full-values.yaml` (multi-host Ingress, external-secrets, per-component scheduling,
+GeoLite2-ASN provisioning) and `geoip-values.yaml` (GeoLite2-ASN with monitoring off, so
+the backend pod's volumes come from geoip alone).
 Add a case there when you add a value that changes what gets rendered.
 
 ## Releasing

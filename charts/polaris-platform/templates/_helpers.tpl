@@ -149,3 +149,139 @@ TokenReviews, else the namespace default as before.
 {{- define "polaris.backendServiceAccount" -}}
 {{- if .Values.assetDiscovery.enabled -}}backend{{- end -}}
 {{- end -}}
+
+{{/*
+GeoLite2-ASN provisioning (geoip.*). When enabled, the backend web and celery-worker pods
+get an init container that downloads the database once into a shared emptyDir, so it is
+there before Django starts, and a sidecar that refreshes it every geoip.frequencyHours.
+The app container mounts the volume read-only and is pointed at the file with
+PERIMETER_DEFENCE_GEOLITE2_ASN_PATH. Each snippet renders nothing when geoip is disabled.
+*/}}
+
+{{/*
+Secret holding the MaxMind account ID and license key: geoip.existingSecret, else the
+backend's own Secret. Only the two keys are read, never the whole Secret.
+*/}}
+{{- define "polaris.geoip.secretName" -}}
+{{- .Values.geoip.existingSecret | default (include "polaris.backendSecretName" .) -}}
+{{- end -}}
+
+{{/*
+Path of the GeoLite2-ASN database inside every container that mounts the volume. Fails
+the render when geoip.editionIds does not download GeoLite2-ASN, since the backend would
+then be pointed at a file that never appears.
+*/}}
+{{- define "polaris.geoip.asnPath" -}}
+{{- if not (has "GeoLite2-ASN" (splitList " " .Values.geoip.editionIds)) -}}
+{{- fail "geoip.editionIds must include GeoLite2-ASN (space-separated edition IDs)" -}}
+{{- end -}}
+{{- printf "%s/GeoLite2-ASN.mmdb" (trimSuffix "/" .Values.geoip.mountPath) -}}
+{{- end -}}
+
+{{/*
+A geoipupdate container. `frequency` 0 runs once and exits (the init container); N > 0
+re-runs every N hours (the sidecar).
+
+Both fail open. The image's own entrypoint exits on a failed download (`set -e`), which
+would block the init container and crash-loop the sidecar, taking the pod out of the
+Service. So geoipupdate is run directly: a failed download is logged, the init container
+still succeeds, and the sidecar retries hourly until it gets through. The backend reopens
+the file when it appears or changes, and clusters by prefix only until then. The Secret
+keys are optional for the same reason: without them the download fails, the pod does not.
+
+Usage: {{- include "polaris.geoip.container" (dict "root" . "name" "geoip-init" "frequency" 0) | nindent 8 }}
+*/}}
+{{- define "polaris.geoip.container" -}}
+{{- $geoip := .root.Values.geoip -}}
+- name: {{ .name }}
+  image: "{{ $geoip.image.repository }}:{{ required "geoip.image.tag must be set" $geoip.image.tag }}"
+  {{- with $geoip.image.pullPolicy }}
+  imagePullPolicy: {{ . }}
+  {{- end }}
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      {{- if eq (int .frequency) 0 }}
+      /usr/bin/geoipupdate --output || echo "geoipupdate: download failed; starting without GeoLite2 (the sidecar retries)" >&2
+      {{- else }}
+      trap 'exit 0' TERM INT
+      while true; do
+        if /usr/bin/geoipupdate --output; then
+          delay={{ mul (int .frequency) 3600 }}
+        else
+          echo "geoipupdate: download failed; retrying in 1h" >&2
+          delay=3600
+        fi
+        sleep "$delay" & wait $!
+      done
+      {{- end }}
+  env:
+    - name: GEOIPUPDATE_ACCOUNT_ID
+      valueFrom:
+        secretKeyRef:
+          name: {{ include "polaris.geoip.secretName" .root }}
+          key: {{ $geoip.accountIdKey }}
+          optional: true
+    - name: GEOIPUPDATE_LICENSE_KEY
+      valueFrom:
+        secretKeyRef:
+          name: {{ include "polaris.geoip.secretName" .root }}
+          key: {{ $geoip.licenseKeyKey }}
+          optional: true
+    - name: GEOIPUPDATE_EDITION_IDS
+      value: {{ $geoip.editionIds | quote }}
+    - name: GEOIPUPDATE_CONF_FILE
+      value: ""
+    - name: GEOIPUPDATE_DB_DIR
+      value: {{ $geoip.mountPath | quote }}
+  {{- with $geoip.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $geoip.securityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  volumeMounts:
+    - name: geoip
+      mountPath: {{ $geoip.mountPath }}
+{{- end -}}
+
+{{/* The one-shot download that runs before the app container starts. */}}
+{{- define "polaris.geoip.initContainer" -}}
+{{- if .Values.geoip.enabled -}}
+{{ include "polaris.geoip.container" (dict "root" . "name" "geoip-init" "frequency" 0) }}
+{{- end -}}
+{{- end -}}
+
+{{/* The refreshing sidecar. geoip.frequencyHours: 0 ⇒ none, the init download only. */}}
+{{- define "polaris.geoip.sidecar" -}}
+{{- if and .Values.geoip.enabled (gt (int .Values.geoip.frequencyHours) 0) -}}
+{{ include "polaris.geoip.container" (dict "root" . "name" "geoipupdate" "frequency" (int .Values.geoip.frequencyHours)) }}
+{{- end -}}
+{{- end -}}
+
+{{/* Env entry pointing the backend at the database. */}}
+{{- define "polaris.geoip.appEnv" -}}
+{{- if .Values.geoip.enabled -}}
+- name: PERIMETER_DEFENCE_GEOLITE2_ASN_PATH
+  value: {{ include "polaris.geoip.asnPath" . | quote }}
+{{- end -}}
+{{- end -}}
+
+{{/* The app container's read-only mount of the database volume. */}}
+{{- define "polaris.geoip.appVolumeMount" -}}
+{{- if .Values.geoip.enabled -}}
+- name: geoip
+  mountPath: {{ .Values.geoip.mountPath }}
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{/* The shared volume the init container, sidecar and app container all mount. */}}
+{{- define "polaris.geoip.volume" -}}
+{{- if .Values.geoip.enabled -}}
+- name: geoip
+  emptyDir: {}
+{{- end -}}
+{{- end -}}

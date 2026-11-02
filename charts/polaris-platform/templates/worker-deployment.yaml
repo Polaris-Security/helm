@@ -24,6 +24,11 @@ spec:
       {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.backend.worker) | trim) }}
       {{- nindent 6 . }}
       {{- end }}
+      {{- with (include "polaris.geoip.initContainer" .) }}
+      initContainers:
+        # Downloads GeoLite2-ASN before the worker starts (geoip.*).
+        {{- nindent 8 . }}
+      {{- end }}
       containers:
         - name: celery-worker
           image: {{ include "polaris.backendImage" . }}
@@ -50,6 +55,21 @@ spec:
               value: {{ .Values.backend.image.tag | quote }}
             - name: SERVICE_NAME
               value: polaris-worker
+            {{- with (include "polaris.geoip.appEnv" .) }}
+            {{- nindent 12 . }}
+            {{- end }}
             {{- with .Values.backend.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- with (include "polaris.geoip.appVolumeMount" .) }}
+          volumeMounts:
+            {{- nindent 12 . }}
+          {{- end }}
+        {{- with (include "polaris.geoip.sidecar" .) }}
+        # Keeps GeoLite2-ASN fresh every geoip.frequencyHours.
+        {{- nindent 8 . }}
+        {{- end }}
+      {{- with (include "polaris.geoip.volume" .) }}
+      volumes:
+        {{- nindent 8 . }}
+      {{- end }}

@@ -464,6 +464,59 @@ ollamaEmbed:
     size: 5Gi
     storageClass: "" # empty ⇒ cluster default (k3s local-path, node-local)
 
+# ─── GeoLite2-ASN (optional) ──────────────────────────────────────────────────
+# The Network Clusterer groups attacker IPs by ASN from a MaxMind GeoLite2-ASN database.
+# Without it the clusters are prefix-only. Enabling this adds, to the backend web and
+# celery-worker pods (not beat):
+#
+#   - a `geoip-init` init container that runs geoipupdate once into a shared emptyDir, so
+#     the database is usually there before the backend starts;
+#   - a `geoipupdate` sidecar that downloads it again every frequencyHours;
+#   - a read-only mount of that volume on the app container, and
+#     PERIMETER_DEFENCE_GEOLITE2_ASN_PATH=<mountPath>/GeoLite2-ASN.mmdb.
+#
+# Both containers fail open: a failed download (bad credentials, missing Secret keys, no
+# egress to updates.maxmind.com) is logged and never blocks or restarts the pod. The
+# sidecar then retries hourly, and the backend picks the file up when it appears, with
+# prefix-only clusters until then.
+#
+# Needs a free MaxMind account (https://www.maxmind.com/en/geolite2/signup) and a
+# license key generated for it.
+geoip:
+  enabled: false
+  image:
+    repository: ghcr.io/maxmind/geoipupdate
+    tag: v7.1.1
+    pullPolicy: IfNotPresent
+  # Space-separated MaxMind edition IDs to download. Must include GeoLite2-ASN, the file
+  # the backend is pointed at; add others (e.g. GeoLite2-City) only if you use them.
+  editionIds: GeoLite2-ASN
+  # Hours between downloads in the sidecar. MaxMind updates GeoLite2 twice a week.
+  # 0 ⇒ no sidecar: the database is downloaded once per pod start.
+  frequencyHours: 72
+  # Where the database volume is mounted in every container that shares it.
+  mountPath: /geoip
+  # Secret holding the MaxMind credentials. Empty ⇒ backend.existingSecret, so the two
+  # keys can sit beside the rest of the backend environment. Only these two keys are read
+  # from it; the geoipupdate containers never see the rest of the Secret.
+  existingSecret: ""
+  accountIdKey: GEOIPUPDATE_ACCOUNT_ID
+  licenseKeyKey: GEOIPUPDATE_LICENSE_KEY
+  # Shared by the init container and the sidecar.
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  # The containers run geoipupdate directly (not the image's entrypoint) and write only to
+  # mountPath.
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
 # ─── Monitoring ───────────────────────────────────────────────────────────────
 # Operational observability (ADR-0019). Plugs into the cluster's existing Prometheus
 # Operator (kube-prometheus-stack) — we ship only the CRDs/dashboards/alerts, never the

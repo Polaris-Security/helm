@@ -104,3 +104,5 @@ jobs:
           echo "ok: asset discovery refuses a missing url or organisation"
           expect_failure "missing backend image tag"     --set backend.image.tag=null
           expect_failure "postgres disabled without urlSecret.name" --set postgres.enabled=false
+          expect_failure "geoip without the GeoLite2-ASN edition" --set geoip.enabled=true \
+            --set geoip.editionIds=GeoLite2-City

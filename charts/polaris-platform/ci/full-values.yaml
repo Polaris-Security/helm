@@ -2,7 +2,8 @@
 # multi-host Ingress loop, the external-secrets objects, per-component scheduling and
 # probes, security contexts, Service annotations, a renamed and pinned Postgres cluster
 # (so DATABASE_URL has to follow it), CPU-only embedding with explicit resources, and a
-# custom Asset Discovery token audience the backend has to follow.
+# custom Asset Discovery token audience the backend has to follow, and GeoLite2-ASN
+# provisioning alongside the metrics sidecar, from its own Secret.
 ingress:
   className: nginx
   hosts:
@@ -93,3 +94,10 @@ imagePullSecrets:
 assetDiscovery:
   polaris:
     tokenAudience: acme-discovery
+
+geoip:
+  enabled: true
+  existingSecret: maxmind
+  editionIds: GeoLite2-ASN GeoLite2-Country
+  frequencyHours: 24
+  mountPath: /var/lib/geoip

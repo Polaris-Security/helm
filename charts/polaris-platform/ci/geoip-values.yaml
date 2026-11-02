@@ -1,0 +1,7 @@
+# CI case: GeoLite2-ASN provisioning with monitoring off, so the backend web pod's
+# volumes and volume mounts come from geoip alone, and the credentials default to
+# backend.existingSecret.
+geoip:
+  enabled: true
+monitoring:
+  enabled: false
