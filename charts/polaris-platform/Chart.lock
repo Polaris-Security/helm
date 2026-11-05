@@ -4,6 +4,6 @@ dependencies:
   version: 6.2.4
 - name: polaris-asset-discovery
   repository: file://../polaris-asset-discovery
-  version: 0.1.35
-digest: sha256:d62b85dd507100d2f72704275a6f7f2a8a589927159c1acdf4d07c71ccbd4313
-generated: "2026-11-05T17:02:14.600198837Z"
+  version: 0.1.36
+digest: sha256:8fcf3cac20dbef8011e6cbdfe2aef6b8eeb67e632362e30f3e6595bcb7680074
+generated: "2026-11-05T18:24:05.668974079Z"
