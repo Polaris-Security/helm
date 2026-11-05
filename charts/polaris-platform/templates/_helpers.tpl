@@ -155,7 +155,9 @@ GeoLite2-ASN provisioning (geoip.*). When enabled, the backend web and celery-wo
 get an init container that downloads the database once into a shared emptyDir, so it is
 there before Django starts, and a sidecar that refreshes it every geoip.frequencyHours.
 The app container mounts the volume read-only and is pointed at the file with
-PERIMETER_DEFENCE_GEOLITE2_ASN_PATH. Each snippet renders nothing when geoip is disabled.
+PERIMETER_DEFENCE_GEOLITE2_ASN_PATH, and at GeoLite2-City (when geoip.editionIds lists it)
+with IDENTITY_DEFENCE_GEOLITE2_CITY_PATH. Each snippet renders nothing when geoip is
+disabled.
 */}}
 
 {{/*
@@ -266,6 +268,10 @@ Usage: {{- include "polaris.geoip.container" (dict "root" . "name" "geoip-init" 
 {{- if .Values.geoip.enabled -}}
 - name: PERIMETER_DEFENCE_GEOLITE2_ASN_PATH
   value: {{ include "polaris.geoip.asnPath" . | quote }}
+{{- if has "GeoLite2-City" (splitList " " .Values.geoip.editionIds) }}
+- name: IDENTITY_DEFENCE_GEOLITE2_CITY_PATH
+  value: {{ printf "%s/GeoLite2-City.mmdb" (trimSuffix "/" .Values.geoip.mountPath) | quote }}
+{{- end }}
 {{- end -}}
 {{- end -}}
 

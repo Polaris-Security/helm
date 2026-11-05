@@ -131,6 +131,7 @@ yourself:
 | `ASSET_DISCOVERY_KUBERNETES_AUDIENCE` | `assetDiscovery.polaris.tokenAudience`, when `assetDiscovery.enabled` |
 | `RELEASE`, `SERVICE_NAME` | the backend image tag and the tier, for telemetry |
 | `PERIMETER_DEFENCE_GEOLITE2_ASN_PATH` | `geoip.mountPath`, on the web and worker containers when `geoip.enabled` (see [GeoLite2-ASN](#geolite2-asn)) |
+| `IDENTITY_DEFENCE_GEOLITE2_CITY_PATH` | `geoip.mountPath`, on the web and worker containers when `geoip.enabled` and `geoip.editionIds` lists `GeoLite2-City` |
 
 Everything else is listed below. **S** marks a credential that belongs in the Secret;
 the rest go in `backend.config`. Unset integrations stay off: the features that need
@@ -338,7 +339,7 @@ default), a read-only mount of the volume at `geoip.mountPath`, and
 | --- | --- | --- |
 | `geoip.enabled` | `false` | Provision the database. |
 | `geoip.image.repository` / `.tag` / `.pullPolicy` | `ghcr.io/maxmind/geoipupdate` / `v7.1.1` / `IfNotPresent` | The geoipupdate image. |
-| `geoip.editionIds` | `GeoLite2-ASN` | Space-separated editions to download. Must include `GeoLite2-ASN`. |
+| `geoip.editionIds` | `GeoLite2-ASN GeoLite2-City` | Space-separated editions to download. Must include `GeoLite2-ASN`. With `GeoLite2-City`, `IDENTITY_DEFENCE_GEOLITE2_CITY_PATH` points Identity Defence at it for impossible travel. |
 | `geoip.frequencyHours` | `72` | Hours between downloads in the sidecar. `0` drops the sidecar: one download per pod start. |
 | `geoip.mountPath` | `/geoip` | Where the volume is mounted. |
 | `geoip.existingSecret` | `backend.existingSecret` | Secret holding the credentials. Only the two keys below are read from it. |

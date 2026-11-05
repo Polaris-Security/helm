@@ -464,16 +464,19 @@ ollamaEmbed:
     size: 5Gi
     storageClass: "" # empty ⇒ cluster default (k3s local-path, node-local)
 
-# ─── GeoLite2-ASN (optional) ──────────────────────────────────────────────────
+# ─── GeoLite2-ASN and GeoLite2-City (optional) ────────────────────────────────
 # The Network Clusterer groups attacker IPs by ASN from a MaxMind GeoLite2-ASN database.
-# Without it the clusters are prefix-only. Enabling this adds, to the backend web and
+# Without it the clusters are prefix-only. Identity Defence reads sign-in coordinates for
+# impossible travel from GeoLite2-City, downloaded alongside. Enabling this adds, to the backend web and
 # celery-worker pods (not beat):
 #
 #   - a `geoip-init` init container that runs geoipupdate once into a shared emptyDir, so
 #     the database is usually there before the backend starts;
 #   - a `geoipupdate` sidecar that downloads it again every frequencyHours;
 #   - a read-only mount of that volume on the app container, and
-#     PERIMETER_DEFENCE_GEOLITE2_ASN_PATH=<mountPath>/GeoLite2-ASN.mmdb.
+#     PERIMETER_DEFENCE_GEOLITE2_ASN_PATH=<mountPath>/GeoLite2-ASN.mmdb, and
+#     IDENTITY_DEFENCE_GEOLITE2_CITY_PATH=<mountPath>/GeoLite2-City.mmdb when editionIds
+#     includes GeoLite2-City.
 #
 # Both containers fail open: a failed download (bad credentials, missing Secret keys, no
 # egress to updates.maxmind.com) is logged and never blocks or restarts the pod. The
@@ -489,8 +492,10 @@ geoip:
     tag: v7.1.1
     pullPolicy: IfNotPresent
   # Space-separated MaxMind edition IDs to download. Must include GeoLite2-ASN, the file
-  # the backend is pointed at; add others (e.g. GeoLite2-City) only if you use them.
-  editionIds: GeoLite2-ASN
+  # the Network Clusterer reads. GeoLite2-City gives Identity Defence the sign-in
+  # coordinates impossible travel needs (IDENTITY_DEFENCE_GEOLITE2_CITY_PATH is set only
+  # when it is listed); drop it and impossible travel reports itself off.
+  editionIds: GeoLite2-ASN GeoLite2-City
   # Hours between downloads in the sidecar. MaxMind updates GeoLite2 twice a week.
   # 0 ⇒ no sidecar: the database is downloaded once per pod start.
   frequencyHours: 72
