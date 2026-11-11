@@ -1,0 +1,27 @@
+# CI case: device access on (Polaris ADR-0155). Protected and public Ingresses, the
+# BunkerWeb mTLS annotations, the NetworkPolicies, and the Device CA from Vault.
+ingress:
+  className: bunkerweb
+  hosts:
+    - polaris.acme.test
+    - mobile.acme.test
+
+externalSecrets:
+  secretStore:
+    enabled: true
+
+deviceAccess:
+  enabled: true
+  mode: report
+  internalCidrs:
+    - 10.0.0.0/8
+    - 192.168.10.0/24
+  caBundle: |
+    -----BEGIN CERTIFICATE-----
+    MIIBplaceholder
+    -----END CERTIFICATE-----
+  signer:
+    vault:
+      enabled: true
+  publicHosts:
+    - www.acme.test

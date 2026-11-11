@@ -77,6 +77,9 @@ spec:
             {{- with (include "polaris.geoip.appEnv" .) }}
             {{- nindent 12 . }}
             {{- end }}
+            {{- with (include "polaris.deviceAccess.appEnv" .) }}
+            {{- nindent 12 . }}
+            {{- end }}
             {{- with .Values.backend.web.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -96,13 +99,16 @@ spec:
           livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or .Values.monitoring.enabled .Values.geoip.enabled }}
+          {{- if or .Values.monitoring.enabled .Values.geoip.enabled .Values.deviceAccess.enabled }}
           volumeMounts:
             {{- if .Values.monitoring.enabled }}
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
             {{- end }}
             {{- with (include "polaris.geoip.appVolumeMount" .) }}
+            {{- nindent 12 . }}
+            {{- end }}
+            {{- with (include "polaris.deviceAccess.appVolumeMount" .) }}
             {{- nindent 12 . }}
             {{- end }}
           {{- end }}
@@ -133,13 +139,16 @@ spec:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
         {{- end }}
-      {{- if or .Values.monitoring.enabled .Values.geoip.enabled }}
+      {{- if or .Values.monitoring.enabled .Values.geoip.enabled .Values.deviceAccess.enabled }}
       volumes:
         {{- if .Values.monitoring.enabled }}
         - name: prometheus-multiproc
           emptyDir: {}
         {{- end }}
         {{- with (include "polaris.geoip.volume" .) }}
+        {{- nindent 8 . }}
+        {{- end }}
+        {{- with (include "polaris.deviceAccess.volume" .) }}
         {{- nindent 8 . }}
         {{- end }}
       {{- end }}

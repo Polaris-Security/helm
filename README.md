@@ -106,6 +106,54 @@ backend, and the frontend serves `/.well-known/apple-app-site-association`, whos
 `applinks` and `webcredentials` entries the app's universal links and Authentik sign-in
 depend on. A hostname the app is associated with only has to be one of `ingress.hosts`.
 
+### Device access
+
+With `deviceAccess.enabled`, Polaris answers only enrolled devices from outside the
+internal network ([Polaris ADR-0155](https://github.com/ReyhZhao/Polaris/blob/main/docs/adr/0155-outside-the-internal-network-polaris-answers-only-enrolled-devices.md)).
+A device enrols, meaning it gets its Device Certificate, from inside, and works from
+anywhere afterwards.
+
+- **`ingress.hosts` are the protected hosts.** BunkerWeb's mTLS plugin requires a
+  certificate from the Device CA (`deviceAccess.caBundle`) on every path except the SSO
+  browser leg and `/.well-known/apple-app-site-association` (`deviceAccess.exemptPathsRegex`).
+  Clients in `deviceAccess.internalCidrs` skip the check through BunkerWeb's IP
+  whitelist. Every other whitelist source is emptied on these hosts, because BunkerWeb's
+  defaults (search-engine rDNS, an ASN) would otherwise bypass mTLS.
+- **`deviceAccess.publicHosts` are the public face.** They have no mTLS, so visitors are
+  never asked for a certificate. Only `deviceAccess.publicPaths` reach the backend
+  (ingest, SCIM, status, signups, the Perimeter Feed, peering's inbound endpoints);
+  everything else goes to the frontend. A host is either public or protected, never both.
+- **BunkerWeb must see real client IPs** (`externalTrafficPolicy: Local` or PROXY
+  protocol). If it doesn't, every client looks like the load balancer, which is usually
+  inside.
+- **The backend checks the certificate too.** A revoked certificate is refused on its next
+  request, and from outside a person's token or session needs their own certificate.
+  The backend trusts the `X-SSL-Client-*` headers BunkerWeb forwards only because the
+  chart's NetworkPolicies (`deviceAccess.networkPolicy`) let nothing but BunkerWeb and
+  this release's pods reach the web ports. Keep them on unless your CNI ignores them,
+  and then enforce the same thing another way.
+
+Setting up a deployment:
+
+1. **Create the Device CA, outside the cluster.** Make a root key and certificate, then an
+   intermediate ("Polaris Device CA", `pathlen:0`) signed by the root. Keep the root key
+   offline. It never goes into Vault or the cluster.
+2. **Give the backend the intermediate.** Put it in Vault at
+   `deviceAccess.signer.vault.remoteKey` with the properties `ca_pem` (intermediate
+   certificate), `ca_key` (its key) and `chain_pem` (the root certificate), and set
+   `deviceAccess.signer.vault.enabled`. Or create the Secret yourself with `ca.pem`,
+   `ca.key` and `chain.pem`, and name it in `deviceAccess.signer.existingSecret`. Only the
+   web pod mounts it.
+3. **Give BunkerWeb what it trusts.** Set `deviceAccess.caBundle` to the intermediate
+   followed by the root (public material).
+4. **Roll out in stages.** Set `deviceAccess.mode: report`, enable, and let people enrol
+   their devices from inside. The backend's log lists everyone it would refuse
+   (`device access would refuse`). Switch to `enforce` once that list is empty.
+
+`deviceAccess.mode` governs BunkerWeb as well as the backend. In `report`, BunkerWeb
+requests and forwards certificates but refuses nobody, so you can see who is not yet
+enrolled. Only `enforce` makes it refuse certificate-less requests from outside.
+
 ## Backend settings
 
 The backend is configured entirely through environment variables. Every backend pod
@@ -132,6 +180,8 @@ yourself:
 | `RELEASE`, `SERVICE_NAME` | the backend image tag and the tier, for telemetry |
 | `PERIMETER_DEFENCE_GEOLITE2_ASN_PATH` | `geoip.mountPath`, on the web and worker containers when `geoip.enabled` (see [GeoLite2-ASN](#geolite2-asn)) |
 | `IDENTITY_DEFENCE_GEOLITE2_CITY_PATH` | `geoip.mountPath`, on the web and worker containers when `geoip.enabled` and `geoip.editionIds` lists `GeoLite2-City` |
+| `INTERNAL_NETWORKS`, `DEVICE_ACCESS_MODE` | `deviceAccess.internalCidrs` and `deviceAccess.mode`, when `deviceAccess.enabled` (see [Device access](#device-access)) |
+| `DEVICE_CA_CERT_PATH`, `DEVICE_CA_KEY_PATH`, `DEVICE_CA_CHAIN_PATH` | `deviceAccess.signer.mountPath`, on the web container only, when `deviceAccess.enabled` |
 
 Everything else is listed below. **S** marks a credential that belongs in the Secret;
 the rest go in `backend.config`. Unset integrations stay off: the features that need

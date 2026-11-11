@@ -273,6 +273,69 @@ ingress:
   # Extra rules appended verbatim to spec.rules, for routing you cannot express above.
   extraRules: []
 
+# ─── Device access ────────────────────────────────────────────────────────────
+# Outside the internal network, Polaris answers only enrolled devices (Polaris ADR-0155).
+# BunkerWeb requires a Device Certificate on ingress.hosts, except from internalCidrs,
+# and the backend checks the certificate is still good and belongs to whoever signs in.
+# The public pages (landing, docs, status, ingest) move to publicHosts, which never ask
+# for a certificate. Off by default. Roll out with mode report before enforce.
+deviceAccess:
+  enabled: false
+  # report | enforce (DEVICE_ACCESS_MODE, and BunkerWeb's MTLS_URL). report: certificates
+  # are requested and forwarded, nobody is refused, and the backend logs who it would
+  # refuse. enforce: outside clients without a valid Device Certificate are refused.
+  mode: report
+  # The Internal Network. Devices enrol only from here, and from here nothing needs a
+  # certificate. Fed to BunkerWeb's WHITELIST_IP and the backend's INTERNAL_NETWORKS, so
+  # both agree. BunkerWeb must see real client IPs (externalTrafficPolicy: Local or PROXY
+  # protocol), or every client looks internal.
+  internalCidrs: []
+  # The certificates BunkerWeb accepts client certificates against: the Device CA
+  # intermediate followed by the root, PEM. Public material.
+  caBundle: ""
+  # The backend's signer: a Secret holding the intermediate (ca.pem), its key (ca.key)
+  # and the chain above it (chain.pem). Bring it yourself, or set vault.enabled to have
+  # external-secrets.io create it from Vault.
+  signer:
+    existingSecret: ""
+    mountPath: /etc/polaris/device-ca
+    vault:
+      enabled: false
+      # Vault key holding the ca_pem, ca_key and chain_pem properties.
+      remoteKey: kv/polaris-device-ca
+      secretStoreRef:
+        # Empty ⇒ externalSecrets.secretStore.name.
+        name: ""
+        kind: SecretStore
+  # Hosts that stay public: no certificate is ever asked for. They route publicPaths to
+  # the backend and everything else to the frontend (landing page, docs, status page).
+  publicHosts: []
+  # Backend paths reachable on publicHosts. Each is an endpoint that authenticates no
+  # person: senders with their own credential, or the public site's own forms.
+  publicPaths:
+    - { path: /api/ingest/, pathType: Prefix }          # Ingest Endpoints
+    - { path: /api/scim/, pathType: Prefix }            # customer IdPs provisioning (ADR-0101)
+    - { path: /api/status/, pathType: Exact }           # the status page
+    - { path: /api/public/, pathType: Prefix }          # landing-page figures
+    - { path: /api/signups/, pathType: Exact }          # the signup form (POST)
+    - { path: /api/feedback/issue/, pathType: Exact }   # the public feedback form
+    - { path: /api/perimeter/feed/, pathType: Prefix }  # Perimeter Feeds, by credential
+    - { path: /api/peering/receive/, pathType: Exact }  # peers' deliveries (ADR-0054)
+    - { path: /api/peering/invites/accept/, pathType: Exact }
+  # Regex of paths on the protected hosts that need no certificate even from outside:
+  # the SSO browser leg, which runs in Safari and cannot present the app's certificate,
+  # and the app-site-association file Apple's CDN fetches. Keep in step with the
+  # backend's SESSION_SIGN_IN_PATHS.
+  exemptPathsRegex: '\.well-known/apple-app-site-association$|auth/|api/auth/mobile/(start|complete|callback)/'
+  # Only BunkerWeb and pods in this namespace may reach the backend and frontend, so the
+  # X-SSL-Client-* headers the backend trusts can only have come from BunkerWeb.
+  networkPolicy:
+    enabled: true
+    # Namespace the BunkerWeb instances run in.
+    ingressControllerNamespace: bunkerweb
+    # Extra `from` peers (NetworkPolicyPeer) allowed to reach the web ports.
+    extraFrom: []
+
 # ─── PostgreSQL (CloudNativePG) ───────────────────────────────────────────────
 # The chart can provision a CNPG Cluster, or you can point it at a database you manage.
 postgres:

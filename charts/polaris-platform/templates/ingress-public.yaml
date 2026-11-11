@@ -1,0 +1,55 @@
+{{- if and .Values.ingress.enabled .Values.deviceAccess.enabled .Values.deviceAccess.publicHosts }}
+{{- range .Values.deviceAccess.publicHosts }}
+{{- if has . $.Values.ingress.hosts }}
+{{- fail (printf "deviceAccess.publicHosts: %s is also in ingress.hosts; a host is either public or protected, since BunkerWeb would merge the two into one service" .) }}
+{{- end }}
+{{- end }}
+# The public face (Polaris ADR-0155): landing page, docs, status page and the endpoints
+# that sign no person in. No mTLS here, so a visitor is never asked for a certificate;
+# everything else lives on ingress.hosts, where outside clients need a Device Certificate.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: polaris-public
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- range .Values.deviceAccess.publicHosts }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- with .Values.ingress.tls.secretName }}
+      secretName: {{ . }}
+      {{- end }}
+  {{- end }}
+  rules:
+    {{- range $host := .Values.deviceAccess.publicHosts }}
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          {{- range $.Values.deviceAccess.publicPaths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: backend
+                port:
+                  number: {{ $.Values.backend.service.port }}
+          {{- end }}
+          # Everything else is the single-page app's public pages.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: {{ $.Values.frontend.service.port }}
+    {{- end }}
+{{- end }}

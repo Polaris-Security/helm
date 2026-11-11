@@ -1,0 +1,37 @@
+{{- if and .Values.deviceAccess.enabled .Values.deviceAccess.networkPolicy.enabled }}
+{{- $np := .Values.deviceAccess.networkPolicy }}
+{{- range $name, $app := dict "backend-web" "backend" "frontend" "frontend" }}
+---
+# Device access (Polaris ADR-0155): the backend trusts the X-SSL-Client-* headers
+# BunkerWeb forwards, which is only sound while nothing but BunkerWeb (and this release's
+# own pods) can reach the web ports.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polaris-{{ $name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ $app }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+        # This release's own pods: workers, beat, in-cluster Asset Discovery.
+        - podSelector: {}
+        {{- with $np.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: http
+    {{- if and (eq $app "backend") $.Values.monitoring.enabled }}
+    # The metrics sidecar's port, scraped from the monitoring namespace; the Ingress
+    # never routes to it.
+    - ports:
+        - port: metrics
+    {{- end }}
+{{- end }}
+{{- end }}

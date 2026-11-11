@@ -79,6 +79,13 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Template tests
+        run: |
+          # What the chart hands BunkerWeb and the backend, read from rendered manifests
+          # (tests/). Device access (Polaris ADR-0155) is the first suite.
+          python3 -m pip install --quiet pytest pyyaml
+          python3 -m pytest -q -p no:cacheprovider tests
+
       - name: Check required values are enforced
         run: |
           set -uo pipefail

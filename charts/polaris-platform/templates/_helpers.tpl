@@ -40,7 +40,7 @@ Service DNS name, so a hostname is normally declared exactly once.
 {{- if .Values.backend.allowedHosts -}}
 {{- join "," .Values.backend.allowedHosts -}}
 {{- else -}}
-{{- $hosts := concat (.Values.ingress.hosts | default list) (list (printf "backend.%s.svc.cluster.local" .Release.Namespace)) -}}
+{{- $hosts := concat (.Values.ingress.hosts | default list) (include "polaris.deviceAccess.publicHosts" . | fromYamlArray) (list (printf "backend.%s.svc.cluster.local" .Release.Namespace)) -}}
 {{- join "," $hosts -}}
 {{- end -}}
 {{- end -}}
@@ -53,7 +53,7 @@ Origins trusted for CSRF. Defaults to https://<host> for each Ingress host.
 {{- join "," .Values.backend.csrfTrustedOrigins -}}
 {{- else -}}
 {{- $origins := list -}}
-{{- range .Values.ingress.hosts | default list -}}
+{{- range concat (.Values.ingress.hosts | default list) (include "polaris.deviceAccess.publicHosts" . | fromYamlArray) -}}
 {{- $origins = append $origins (printf "https://%s" .) -}}
 {{- end -}}
 {{- join "," $origins -}}
@@ -75,6 +75,11 @@ backend.extraConfig — so a user's extraConfig always wins.
 {{- /* The audience the subchart mints its projected token for; the two must match. */ -}}
 {{- $discovery := .Values.assetDiscovery.polaris | default dict -}}
 {{- $_ := set $derived "ASSET_DISCOVERY_KUBERNETES_AUDIENCE" ($discovery.tokenAudience | default "polaris-asset-discovery") -}}
+{{- end -}}
+{{- if .Values.deviceAccess.enabled -}}
+{{- /* Device access (ADR-0155): the backend's own check, and the same "inside" as BunkerWeb. */ -}}
+{{- $_ := set $derived "INTERNAL_NETWORKS" (include "polaris.deviceAccess.internalCidrs" .) -}}
+{{- $_ := set $derived "DEVICE_ACCESS_MODE" .Values.deviceAccess.mode -}}
 {{- end -}}
 {{- $config := merge (deepCopy (.Values.backend.extraConfig | default dict)) (deepCopy (.Values.backend.config | default dict)) $derived -}}
 {{- range $key, $value := $config }}
@@ -289,5 +294,96 @@ Usage: {{- include "polaris.geoip.container" (dict "root" . "name" "geoip-init" 
 {{- if .Values.geoip.enabled -}}
 - name: geoip
   emptyDir: {}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Device access (Polaris ADR-0155): the BunkerWeb settings that make ingress.hosts answer
+only enrolled devices from outside the internal network.
+
+- optional: every handshake completes, so the two decisions below can be made per request.
+- MTLS_URL_1: every path except the exempt ones needs a verified certificate. Only in
+  mode enforce: before that, certificates are requested and forwarded but nobody is
+  refused, so the backend's report shows who would be.
+- WHITELIST_IP: the internal network skips that check. A whitelist match stops BunkerWeb's
+  access phase before the mTLS plugin runs, so every other whitelist source is emptied:
+  the defaults (search-engine rDNS, an ASN) would otherwise bypass mTLS.
+*/}}
+{{- define "polaris.deviceAccess.annotations" -}}
+{{- $da := .Values.deviceAccess -}}
+bunkerweb.io/USE_MTLS: "yes"
+bunkerweb.io/MTLS_VERIFY_CLIENT: "optional"
+bunkerweb.io/MTLS_CA_CERTIFICATE_PRIORITY: "data"
+bunkerweb.io/MTLS_CA_CERTIFICATE_DATA: {{ required "deviceAccess.caBundle must be set when deviceAccess.enabled" $da.caBundle | quote }}
+bunkerweb.io/MTLS_VERIFY_DEPTH: "2"
+bunkerweb.io/MTLS_FORWARD_CLIENT_HEADERS: "yes"
+{{- if eq $da.mode "enforce" }}
+bunkerweb.io/MTLS_URL_1: {{ printf "^/(?!(?:%s))" $da.exemptPathsRegex | quote }}
+{{- end }}
+bunkerweb.io/USE_WHITELIST: "yes"
+bunkerweb.io/WHITELIST_IP: {{ include "polaris.deviceAccess.internalCidrs" . | replace "," " " | quote }}
+{{- range list "WHITELIST_IP_URLS" "WHITELIST_RDNS" "WHITELIST_RDNS_URLS" "WHITELIST_ASN" "WHITELIST_ASN_URLS" "WHITELIST_USER_AGENT" "WHITELIST_USER_AGENT_URLS" "WHITELIST_URI" "WHITELIST_URI_URLS" "WHITELIST_HEADER_NAME" "WHITELIST_HEADER_VALUE" }}
+bunkerweb.io/{{ . }}: ""
+{{- end }}
+{{- end -}}
+
+{{/* The internal network, comma-separated. Enabling device access without one would
+let nobody enrol, so it is required. */}}
+{{- define "polaris.deviceAccess.internalCidrs" -}}
+{{- $cidrs := .Values.deviceAccess.internalCidrs | default list -}}
+{{- if not $cidrs -}}
+{{- fail "deviceAccess.internalCidrs must list the internal network when deviceAccess.enabled — devices can only enrol from it" -}}
+{{- end -}}
+{{- join "," $cidrs -}}
+{{- end -}}
+
+{{/* The public hosts as a YAML list, empty unless device access is on. */}}
+{{- define "polaris.deviceAccess.publicHosts" -}}
+{{- if .Values.deviceAccess.enabled -}}
+{{- toYaml (.Values.deviceAccess.publicHosts | default list) -}}
+{{- else -}}
+[]
+{{- end -}}
+{{- end -}}
+
+{{/* The Secret holding the Device CA intermediate, its key and the chain above it. */}}
+{{- define "polaris.deviceAccess.signerSecretName" -}}
+{{- $signer := .Values.deviceAccess.signer -}}
+{{- if $signer.existingSecret -}}
+{{- $signer.existingSecret -}}
+{{- else if $signer.vault.enabled -}}
+polaris-device-ca
+{{- else -}}
+{{- fail "deviceAccess.signer.existingSecret (or signer.vault.enabled) must be set when deviceAccess.enabled — the backend signs Device Certificates with it" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The web pod's view of the signer Secret. Only the web pod signs, so only it mounts the key. */}}
+{{- define "polaris.deviceAccess.appEnv" -}}
+{{- if .Values.deviceAccess.enabled -}}
+{{- $dir := .Values.deviceAccess.signer.mountPath -}}
+- name: DEVICE_CA_CERT_PATH
+  value: {{ printf "%s/ca.pem" $dir | quote }}
+- name: DEVICE_CA_KEY_PATH
+  value: {{ printf "%s/ca.key" $dir | quote }}
+- name: DEVICE_CA_CHAIN_PATH
+  value: {{ printf "%s/chain.pem" $dir | quote }}
+{{- end -}}
+{{- end -}}
+
+{{- define "polaris.deviceAccess.appVolumeMount" -}}
+{{- if .Values.deviceAccess.enabled -}}
+- name: device-ca
+  mountPath: {{ .Values.deviceAccess.signer.mountPath }}
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{- define "polaris.deviceAccess.volume" -}}
+{{- if .Values.deviceAccess.enabled -}}
+- name: device-ca
+  secret:
+    secretName: {{ include "polaris.deviceAccess.signerSecretName" . }}
+    defaultMode: 0400
 {{- end -}}
 {{- end -}}
