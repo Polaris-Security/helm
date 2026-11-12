@@ -2,6 +2,39 @@ apiVersion: v1
 entries:
   polaris:
   - apiVersion: v2
+    appVersion: 0.99.126
+    created: "2026-11-12T14:56:05.473164488Z"
+    dependencies:
+    - condition: valkey.enabled
+      name: valkey
+      repository: https://charts.bitnami.com/bitnami
+      version: 6.2.4
+    - alias: assetDiscovery
+      condition: assetDiscovery.enabled
+      name: polaris-asset-discovery
+      repository: file://../polaris-asset-discovery
+      version: ~0.1.0
+    description: Polaris Security platform — Django/Celery backend, SPA frontend and
+      the supporting Postgres, Valkey, embedding and observability components.
+    digest: e477c54f96078e6b506071648d5d290d0b9419816d7c99f525769c0042646b90
+    home: https://github.com/Polaris-Security/polaris-helm
+    keywords:
+    - security
+    - incident-response
+    - django
+    - celery
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - email: eddie@vels.online
+      name: Eddie Vels
+    name: polaris
+    sources:
+    - https://github.com/Polaris-Security/polaris-helm
+    type: application
+    urls:
+    - https://github.com/Polaris-Security/helm/releases/download/polaris-1.1.181/polaris-1.1.181.tgz
+    version: 1.1.181
+  - apiVersion: v2
     appVersion: 0.99.124
     created: "2026-11-12T09:11:14.395088127Z"
     dependencies:
@@ -5272,6 +5305,29 @@ entries:
     version: 1.1.0
   polaris-asset-discovery:
   - apiVersion: v2
+    appVersion: 0.99.126
+    created: "2026-11-12T14:56:05.59690313Z"
+    description: Polaris Asset Discovery — reports the workloads running in a Kubernetes
+      cluster, their versions and how they are exposed, to Polaris as Workload Assets.
+    digest: be3ca8abe228785c56cd5bc594fb28eab94266ce24d4f772db61a434ca671ef2
+    home: https://github.com/Polaris-Security/polaris-helm
+    keywords:
+    - security
+    - inventory
+    - kubernetes
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - email: eddie@vels.online
+      name: Eddie Vels
+    name: polaris-asset-discovery
+    sources:
+    - https://github.com/Polaris-Security/polaris-helm
+    - https://github.com/Polaris-Security/polaris-security/tree/main/asset-discovery
+    type: application
+    urls:
+    - https://github.com/Polaris-Security/helm/releases/download/polaris-asset-discovery-0.1.53/polaris-asset-discovery-0.1.53.tgz
+    version: 0.1.53
+  - apiVersion: v2
     appVersion: 0.99.124
     created: "2026-11-12T09:11:14.597966204Z"
     description: Polaris Asset Discovery — reports the workloads running in a Kubernetes
@@ -6467,4 +6523,4 @@ entries:
     urls:
     - https://github.com/Polaris-Security/helm/releases/download/polaris-asset-discovery-0.1.0/polaris-asset-discovery-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-12T09:11:14.598666077Z"
+generated: "2026-11-12T14:56:05.597853981Z"
