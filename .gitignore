@@ -9,3 +9,4 @@ charts/*/charts/
 charts/*/*.tgz
 
 
+__pycache__/

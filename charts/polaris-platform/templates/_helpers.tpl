@@ -18,6 +18,76 @@ celery-worker, celery-beat) and read by the celery-exporter for the broker URL.
 {{- end -}}
 
 {{/*
+Whether each backend workload mounts its own Secret (backend.secrets.mode=split) rather
+than backend.existingSecret whole. Fails on any other mode.
+*/}}
+{{- define "polaris.secretsSplit" -}}
+{{- $mode := .Values.backend.secrets.mode -}}
+{{- if eq $mode "split" -}}true
+{{- else if ne $mode "legacy" -}}
+{{- fail (printf "backend.secrets.mode must be legacy or split, not %q" $mode) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The Secret a backend workload ("web", "worker", "beat", "migrate") mounts with envFrom:
+backend.existingSecret in legacy mode, the workload's own in split mode.
+
+Usage: {{ include "polaris.workloadSecretName" (dict "root" . "workload" "web") }}
+*/}}
+{{- define "polaris.workloadSecretName" -}}
+{{- if include "polaris.secretsSplit" .root -}}
+{{- $w := index .root.Values.backend.secrets .workload -}}
+{{- required (printf "backend.secrets.%s.name must be set in split mode" .workload) $w.name -}}
+{{- else -}}
+{{- include "polaris.backendSecretName" .root -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Credentials that can change accounts in another system, which the web pod must never hold
+(Polaris ADR-0159). AUTHENTIK_API_TOKEN is the single admin token the role tokens replace:
+where it is the only Authentik token it acts as the response token too.
+*/}}
+{{- define "polaris.responsePluginKeys" -}}
+- AUTHENTIK_API_TOKEN
+- AUTHENTIK_RESPONSE_API_TOKEN
+- ENTRA_CLIENT_SECRET
+- NETBIRD_API_TOKEN
+- MAILU_API_TOKEN
+- MAILU_DOVEADM_API_KEY
+- MAILU_SIEVE_PASSWORD
+{{- end -}}
+
+{{/*
+The keys a backend workload's Secret holds in split mode: its own list, and for the
+default worker the Response Plugin credentials too, while no Response Worker takes them.
+Returned as a YAML list. Fails when a workload lacks SECRET_KEY, when web, worker or beat
+lack REDIS_URL, or when web lists a Response Plugin credential.
+*/}}
+{{- define "polaris.workloadKeys" -}}
+{{- $s := .root.Values.backend.secrets -}}
+{{- $keys := (index $s .workload).keys | default list -}}
+{{- if eq .workload "worker" -}}
+{{- $keys = concat $keys ($s.responseKeys | default list) -}}
+{{- end -}}
+{{- if not (has "SECRET_KEY" $keys) -}}
+{{- fail (printf "backend.secrets.%s.keys must include SECRET_KEY" .workload) -}}
+{{- end -}}
+{{- if and (has .workload (list "web" "worker" "beat")) (not (has "REDIS_URL" $keys)) -}}
+{{- fail (printf "backend.secrets.%s.keys must include REDIS_URL: it is the Celery broker" .workload) -}}
+{{- end -}}
+{{- if eq .workload "web" -}}
+{{- range concat (include "polaris.responsePluginKeys" .root | fromYamlArray) ($s.responseKeys | default list) -}}
+{{- if has . $keys -}}
+{{- fail (printf "backend.secrets.web.keys lists %s, a Response Plugin credential: the web pod must never hold one (Polaris ADR-0159). Use AUTHENTIK_ENROLLMENT_API_TOKEN for Authentik on web." .) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml (uniq $keys) -}}
+{{- end -}}
+
+{{/*
 Name of the Secret holding the Postgres connection URI. Defaults to the "<cluster>-app"
 Secret CloudNativePG generates for the owner role; overridable for a bring-your-own
 database.
@@ -170,7 +240,7 @@ Secret holding the MaxMind account ID and license key: geoip.existingSecret, els
 backend's own Secret. Only the two keys are read, never the whole Secret.
 */}}
 {{- define "polaris.geoip.secretName" -}}
-{{- .Values.geoip.existingSecret | default (include "polaris.backendSecretName" .) -}}
+{{- .Values.geoip.existingSecret | default (include "polaris.workloadSecretName" (dict "root" . "workload" "worker")) -}}
 {{- end -}}
 
 {{/*

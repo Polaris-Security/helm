@@ -32,6 +32,65 @@ backend:
   # (e.g. SECRET_KEY, POSTHOG_API_KEY) and are passed through verbatim.
   existingSecret: backend-secret
 
+  # Which credentials each backend workload receives (Polaris PRD #1213, ADR-0159).
+  #
+  #   legacy (the default): every backend pod mounts backend.existingSecret whole, as
+  #     before, so an upgrade changes nothing until you opt in.
+  #   split: each workload mounts its own Secret, holding only the keys listed for it
+  #     below, so the blast radius of each pod is what its list says. backend.existingSecret
+  #     is then not mounted anywhere.
+  #
+  # In split mode each workload's Secret is named by `name`. Bring those Secrets yourself,
+  # or set externalSecret.enabled to have the chart render one ExternalSecret per workload
+  # that copies exactly the listed keys from Vault. Every listed key must exist at the
+  # source: external-secrets refuses to sync a Secret with a missing key. List every key
+  # your backend.existingSecret holds that the workload uses: an unlisted
+  # LLM_CREDENTIAL_ENCRYPTION_KEY or OPERATIVE_SECRET_ENCRYPTION_KEY falls back to one
+  # derived from SECRET_KEY, which cannot decrypt what the real key encrypted.
+  # The README's Backend settings tables say which keys each feature uses.
+  secrets:
+    mode: legacy
+    web:
+      name: backend-web
+      # The internet-facing pod. Never list a Response Plugin credential here.
+      keys:
+        - SECRET_KEY
+        - REDIS_URL
+    worker:
+      name: backend-worker
+      # The default Celery worker. It also receives responseKeys while no Response
+      # Worker runs. Keep REDIS_URL: the celery-exporter reads it from this Secret.
+      keys:
+        - SECRET_KEY
+        - REDIS_URL
+    beat:
+      name: backend-beat
+      # The scheduler only enqueues: no integration credential.
+      keys:
+        - SECRET_KEY
+        - REDIS_URL
+    migrate:
+      name: backend-migrate
+      # The migrate init container: SECRET_KEY only (DATABASE_URL comes from
+      # postgres.urlSecret, as on every backend container).
+      keys:
+        - SECRET_KEY
+    # The Response Plugin credentials: the keys that can change accounts in another system,
+    # e.g. AUTHENTIK_RESPONSE_API_TOKEN, ENTRA_TENANT_ID, ENTRA_CLIENT_ID,
+    # ENTRA_CLIENT_SECRET, NETBIRD_API_TOKEN, MAILU_API_TOKEN, MAILU_DOVEADM_API_KEY and
+    # MAILU_SIEVE_PASSWORD. List only the ones you use. They are never mounted on web; the
+    # default worker receives them while no Response Worker runs.
+    responseKeys: []
+    # Render one ExternalSecret per workload (needs external-secrets.io).
+    externalSecret:
+      enabled: false
+      # Vault key the listed keys are read from, as properties.
+      remoteKey: kv/polaris
+      # Empty ⇒ externalSecrets.secretStore.name.
+      secretStoreRef:
+        name: ""
+        kind: SecretStore
+
   # Hostnames Django accepts requests for. Empty ⇒ derived from ingress.hosts plus the
   # in-cluster Service DNS name, so you normally set the hostname only once, in
   # ingress.hosts. Set explicitly to take full control.

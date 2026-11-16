@@ -1,0 +1,2124 @@
+---
+# Source: polaris/charts/valkey/templates/networkpolicy.yaml
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: polaris-valkey
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/part-of: valkey
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: polaris
+      app.kubernetes.io/name: valkey
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - {}
+  ingress:
+    # Allow inbound connections
+    - ports:
+        - port: 6379
+    # Allow prometheus scrapes for metrics
+    - ports:
+        - port: 9121
+
+---
+# Source: polaris/charts/valkey/templates/primary/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: polaris-valkey-primary
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/component: primary
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: polaris
+      app.kubernetes.io/name: valkey
+      app.kubernetes.io/component: primary
+
+---
+# Source: polaris/charts/assetDiscovery/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+# The automounted token is what the Kubernetes client reads the cluster with. The token
+# presented to Polaris is a separate projected one with its own audience (deployment.yaml).
+automountServiceAccountToken: true
+
+---
+# Source: polaris/charts/valkey/templates/primary/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: false
+metadata:
+  name: polaris-valkey-primary
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/part-of: valkey
+
+---
+# Source: polaris/templates/backend-token-review.yaml
+# The backend web pod verifies Asset Discovery's projected token with a TokenReview
+# (ADR-0127 in polaris-security). `system:auth-delegator` grants creating TokenReviews and
+# SubjectAccessReviews and nothing else — no read of any object in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend
+automountServiceAccountToken: true
+
+---
+# Source: polaris/charts/valkey/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-valkey-configuration
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/part-of: valkey
+data:
+  valkey.conf: |-
+    # User-supplied common configuration:
+    # Enable AOF https://valkey.io/docs/topics/persistence.html
+    appendonly yes
+    # Disable RDB persistence, AOF persistence already enabled.
+    save ""
+    # End of common configuration
+  primary.conf: |-
+    dir /data
+    # User-supplied primary configuration:
+    rename-command FLUSHDB ""
+    rename-command FLUSHALL ""
+    # End of primary configuration
+  replica.conf: |-
+    dir /data
+    # User-supplied replica configuration:
+    rename-command FLUSHDB ""
+    rename-command FLUSHALL ""
+    # End of replica configuration
+
+---
+# Source: polaris/charts/valkey/templates/health-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-valkey-health
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+data:
+  ping_readiness_local.sh: |-
+    #!/bin/bash
+
+    timeout=$1
+    run_valkey_command() {
+        local args=("-p" "$VALKEY_PORT")
+        timeout -s 15 $timeout valkey-cli "${args[@]}" "$@"
+    }
+
+    [[ -f $VALKEY_PASSWORD_FILE ]] && export VALKEY_PASSWORD="$(< "${VALKEY_PASSWORD_FILE}")"
+    [[ -n "$VALKEY_PASSWORD" ]] && export REDISCLI_AUTH="$VALKEY_PASSWORD"
+    response=$(run_valkey_command ping)
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    if [ "$response" != "PONG" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_liveness_local.sh: |-
+    #!/bin/bash
+
+    [[ -f $VALKEY_PASSWORD_FILE ]] && export VALKEY_PASSWORD="$(< "${VALKEY_PASSWORD_FILE}")"
+    [[ -n "$VALKEY_PASSWORD" ]] && export REDISCLI_AUTH="$VALKEY_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      valkey-cli \
+        -h localhost \
+        -p $VALKEY_PORT \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    responseFirstWord=$(echo $response | head -n1 | awk '{print $1;}')
+    if [ "$response" != "PONG" ] && [ "$responseFirstWord" != "LOADING" ] && [ "$responseFirstWord" != "MASTERDOWN" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_readiness_primary.sh: |-
+    #!/bin/bash
+
+    [[ -f $VALKEY_PRIMARY_PASSWORD_FILE ]] && export VALKEY_PRIMARY_PASSWORD="$(< "${VALKEY_PRIMARY_PASSWORD_FILE}")"
+    [[ -n "$VALKEY_PRIMARY_PASSWORD" ]] && export REDISCLI_AUTH="$VALKEY_PRIMARY_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      valkey-cli \
+        -h $VALKEY_PRIMARY_HOST \
+        -p $VALKEY_PRIMARY_PORT_NUMBER \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    if [ "$response" != "PONG" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_liveness_primary.sh: |-
+    #!/bin/bash
+
+    [[ -f $VALKEY_PRIMARY_PASSWORD_FILE ]] && export VALKEY_PRIMARY_PASSWORD="$(< "${VALKEY_PRIMARY_PASSWORD_FILE}")"
+    [[ -n "$VALKEY_PRIMARY_PASSWORD" ]] && export REDISCLI_AUTH="$VALKEY_PRIMARY_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      valkey-cli \
+        -h $VALKEY_PRIMARY_HOST \
+        -p $VALKEY_PRIMARY_PORT_NUMBER \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    responseFirstWord=$(echo $response | head -n1 | awk '{print $1;}')
+    if [ "$response" != "PONG" ] && [ "$responseFirstWord" != "LOADING" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_readiness_local_and_primary.sh: |-
+    script_dir="$(dirname "$0")"
+    exit_status=0
+    "$script_dir/ping_readiness_local.sh" $1 || exit_status=$?
+    "$script_dir/ping_readiness_primary.sh" $1 || exit_status=$?
+    exit $exit_status
+  ping_liveness_local_and_primary.sh: |-
+    script_dir="$(dirname "$0")"
+    exit_status=0
+    "$script_dir/ping_liveness_local.sh" $1 || exit_status=$?
+    "$script_dir/ping_liveness_primary.sh" $1 || exit_status=$?
+    exit $exit_status
+
+---
+# Source: polaris/charts/valkey/templates/scripts-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-valkey-scripts
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/part-of: valkey
+data:
+  start-primary.sh: |
+    #!/bin/bash
+
+    [[ -f $VALKEY_PASSWORD_FILE ]] && export VALKEY_PASSWORD="$(< "${VALKEY_PASSWORD_FILE}")"
+    if [[ -f /opt/bitnami/valkey/mounted-etc/primary.conf ]];then
+        cp /opt/bitnami/valkey/mounted-etc/primary.conf /opt/bitnami/valkey/etc/primary.conf
+    fi
+    if [[ -f /opt/bitnami/valkey/mounted-etc/valkey.conf ]];then
+        cp /opt/bitnami/valkey/mounted-etc/valkey.conf /opt/bitnami/valkey/etc/valkey.conf
+    fi
+    ARGS=("--port" "${VALKEY_PORT}")
+    VALKEY_AUTH_CONF="$(mktemp /tmp/valkey-auth-XXXXXX.conf)"
+    chmod 600 "${VALKEY_AUTH_CONF}"
+    printf "requirepass %s\nprimaryauth %s\n" "${VALKEY_PASSWORD}" "${VALKEY_PASSWORD}" > "${VALKEY_AUTH_CONF}"
+    ARGS+=("--include" "${VALKEY_AUTH_CONF}")
+    ARGS+=("--include" "/opt/bitnami/valkey/etc/valkey.conf")
+    ARGS+=("--include" "/opt/bitnami/valkey/etc/primary.conf")
+    exec valkey-server "${ARGS[@]}"
+
+---
+# Source: polaris/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  ALLOWED_HOSTS: "polaris.acme.test,alerts.acme.test,backend.polaris.svc.cluster.local"
+  ASSET_DISCOVERY_KUBERNETES_AUDIENCE: "acme-discovery"
+  ASSET_DISCOVERY_KUBERNETES_SERVICE_ACCOUNTS: "polaris:polaris-asset-discovery"
+  ASSISTANT_LOOP_MAX_ITERATIONS: "10"
+  AUTHENTIK_ENROLLMENT_FLOW_SLUG: "default-enrollment-flow"
+  BUNKERWEB_PUBLIC_FQDN: "proxy.example.com"
+  CLOSURE_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+  CORRELATION_LLM_PROVIDER: "correlations.llm.ollama.OllamaDraftProvider"
+  CSRF_TRUSTED_ORIGINS: "https://polaris.acme.test,https://alerts.acme.test"
+  CUSTOM_FLAG: "yes"
+  DEBUG: "False"
+  DEPLOYMENT_BASE_URL: ""
+  DEPLOYMENT_NAME: "Polaris Security"
+  DISTILL_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+  EMAIL_SSL_NO_VERIFY: "True"
+  ENVIRONMENT: "production"
+  EXCEPTION_LLM_PROVIDER: "exceptions.llm.ollama.OllamaProvider"
+  INBOUND_IMAP_HOST: "mail.example.com"
+  INCIDENT_ASSISTANT_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+  KNOWLEDGE_EXCHANGE_PREMUTE_THRESHOLD: "100"
+  KNOWLEDGE_EXCHANGE_REPO: "Polaris-Security/exchange"
+  LOG_LEVEL: "DEBUG"
+  OLLAMA_MODEL: "gpt-oss:120b-cloud"
+  ONCALL_ROUTING: "llm_guided"
+  POSTHOG_HOST: "https://eu.i.posthog.com"
+  POSTHOG_LOGS_ENABLED: "True"
+  POSTHOG_LOG_LEVEL: "WARNING"
+  PULSEGRID_BASE_URL: ""
+  PULSEGRID_ORG_ID: ""
+  SEMAPHORE_PROJECT_ID: "1"
+  TRIAGE_AGENT_LOOP_DEADLINE_S: "300"
+  TRIAGE_AGENT_LOOP_MAX_ITERATIONS: "15"
+  TRIAGE_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+
+---
+# Source: polaris/templates/monitoring-grafana-dashboard.yaml
+# Starter Grafana dashboard (ADR-0019) auto-discovered by the Grafana sidecar via the
+# label below. Covers API RED metrics, Celery task health/backlog and pod availability,
+# plus a dedicated Django (django-prometheus) section: request/response, latency,
+# exceptions, busiest/slowest views and body sizes.
+#
+# Every query is scoped to the release namespace via the hidden `$namespace` constant
+# so other Django apps elsewhere in the cluster never bleed into these panels. The
+# Prometheus Operator stamps a `namespace` label onto every ServiceMonitor/PodMonitor
+# target, which is what these matchers filter on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: polaris-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  polaris.json: |
+    {
+      "title": "Polaris Security — Platform Operations",
+      "uid": "polaris-ops",
+      "schemaVersion": 39,
+      "editable": true,
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {}
+          },
+          {
+            "name": "namespace",
+            "type": "constant",
+            "query": "polaris",
+            "current": { "value": "polaris", "text": "polaris" },
+            "hide": 2
+          }
+        ]
+      },
+      "panels": [
+        {
+          "title": "API request rate (RED)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\"}[5m])) by (status)",
+              "legendFormat": "{{status}}"
+            }
+          ]
+        },
+        {
+          "title": "API error ratio (5xx)",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\"}[5m])), 1)"
+            }
+          ]
+        },
+        {
+          "title": "API latency p95 (s)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            }
+          ]
+        },
+        {
+          "title": "Celery task throughput",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(celery_task_succeeded_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "succeeded"
+            },
+            {
+              "expr": "sum(rate(celery_task_failed_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "failed"
+            },
+            {
+              "expr": "sum(rate(celery_task_retried_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "retried"
+            }
+          ]
+        },
+        {
+          "title": "Celery queue backlog",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(celery_queue_length{namespace=\"$namespace\"}) by (queue_name)",
+              "legendFormat": "{{queue_name}}"
+            }
+          ]
+        },
+        {
+          "title": "Pod restarts (15m)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[15m])) by (pod)",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "title": "Django (django-prometheus)",
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+          "panels": []
+        },
+        {
+          "title": "Request rate by method",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_requests_total_by_method_total{namespace=\"$namespace\"}[5m])) by (method)",
+              "legendFormat": "{{method}}"
+            }
+          ]
+        },
+        {
+          "title": "Responses by status code",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_total_by_status_total{namespace=\"$namespace\"}[5m])) by (status)",
+              "legendFormat": "{{status}}"
+            }
+          ]
+        },
+        {
+          "title": "Request latency incl. middleware (p50/p95/p99)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ]
+        },
+        {
+          "title": "Slowest views (p95 latency)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+          "targets": [
+            {
+              "expr": "topk(10, histogram_quantile(0.95, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{namespace=\"$namespace\"}[5m])) by (le, view)))",
+              "legendFormat": "{{view}}"
+            }
+          ]
+        },
+        {
+          "title": "Busiest views (request rate)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+          "targets": [
+            {
+              "expr": "topk(10, sum(rate(django_http_requests_total_by_view_transport_method_total{namespace=\"$namespace\"}[5m])) by (view))",
+              "legendFormat": "{{view}}"
+            }
+          ]
+        },
+        {
+          "title": "Exceptions by type",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_exceptions_total_by_type_total{namespace=\"$namespace\"}[5m])) by (type)",
+              "legendFormat": "{{type}}"
+            }
+          ]
+        },
+        {
+          "title": "Exceptions by view",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+          "targets": [
+            {
+              "expr": "topk(10, sum(rate(django_http_exceptions_total_by_view_total{namespace=\"$namespace\"}[5m])) by (view))",
+              "legendFormat": "{{view}}"
+            }
+          ]
+        },
+        {
+          "title": "Request / response body size (p95 bytes)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_requests_body_total_bytes_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "request"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(django_http_responses_body_total_bytes_bucket{namespace=\"$namespace\"}[5m])) by (le))",
+              "legendFormat": "response"
+            }
+          ]
+        },
+        {
+          "title": "Streaming & AJAX response rate",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+          "targets": [
+            {
+              "expr": "sum(rate(django_http_responses_streaming_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "streaming"
+            },
+            {
+              "expr": "sum(rate(django_http_ajax_requests_total{namespace=\"$namespace\"}[5m]))",
+              "legendFormat": "ajax"
+            }
+          ]
+        }
+      ]
+    }
+
+---
+# Source: polaris/templates/ollama-embed-deployment.yaml
+# Node-local (RWO) cache for pulled models so a restart doesn't re-download. Binds on
+# whichever node the pod is scheduled to.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-embed-models
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# Source: polaris/charts/assetDiscovery/templates/rbac.yaml
+# Read-only, and only the kinds discovery looks at. No Secrets, no ConfigMaps, no pod logs
+# or exec: an inventory needs to know what runs, never what it holds.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, services]
+    verbs: [get, list, watch]
+  # Only to read kube-system's UID, the cluster's stable identity.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+
+---
+# Source: polaris/charts/assetDiscovery/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: polaris-asset-discovery
+subjects:
+  - kind: ServiceAccount
+    name: polaris-asset-discovery
+    namespace: polaris
+
+---
+# Source: polaris/templates/backend-token-review.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polaris-backend-token-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: backend
+    namespace: polaris
+
+---
+# Source: polaris/charts/valkey/templates/headless-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris-valkey-headless
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/part-of: valkey
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: tcp-redis
+      port:  6379
+      targetPort: redis
+  selector:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/name: valkey
+
+---
+# Source: polaris/charts/valkey/templates/metrics-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris-valkey-metrics
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: valkey
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      port: 9121
+      protocol: TCP
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/name: valkey
+
+---
+# Source: polaris/charts/valkey/templates/primary/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris-valkey-primary
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/component: primary
+    app.kubernetes.io/part-of: valkey
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Cluster
+  ports:
+    - name: tcp-redis
+      port: 6379
+      targetPort: redis
+      nodePort: null
+  selector:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: primary
+
+---
+# Source: polaris/templates/frontend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+# Source: polaris/templates/monitoring-backend.yaml
+# Internal-only Service for the backend metrics sidecar. Separate from the public
+# `backend` Service (port 8000) so the metrics port is never referenced by the Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-metrics
+  labels:
+    app: backend
+    component: metrics
+    prometheus: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: metrics
+      port: 9808
+      targetPort: metrics
+
+---
+# Source: polaris/templates/monitoring-celery-exporter.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: celery-exporter
+  labels:
+    app: celery-exporter
+    prometheus: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app: celery-exporter
+  ports:
+    - name: metrics
+      port: 9808
+      targetPort: metrics
+
+---
+# Source: polaris/templates/ollama-embed-service.yaml
+# Cluster-internal only — the measurement job (run inside the backend pod) reaches the
+# embedder at http://ollama-embed:11434. Never routed by the public Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-embed
+  labels:
+    app: ollama-embed
+spec:
+  selector:
+    app: ollama-embed
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+
+---
+# Source: polaris/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app: backend
+  annotations:
+    prometheus.io/scrape: "false"
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+
+---
+# Source: polaris/charts/assetDiscovery/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+spec:
+  # One per cluster: two would send the same snapshot twice, harmless but pointless.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: assetDiscovery
+      app.kubernetes.io/instance: polaris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: assetDiscovery
+        app.kubernetes.io/instance: polaris
+    spec:
+      serviceAccountName: polaris-asset-discovery
+      securityContext:
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: asset-discovery
+          image: "docker.io/polarissecurity/asset-discovery:0.99.132"
+          imagePullPolicy: IfNotPresent
+          args: ["run"]
+          env:
+            - name: DISCOVERY_MODE
+              value: kubernetes
+            - name: POLARIS_URL
+              value: "http://backend.polaris.svc.cluster.local:8000"
+            - name: POLARIS_KUBERNETES_TOKEN_PATH
+              value: /var/run/secrets/polaris/token
+            - name: POLARIS_VERIFY_TLS
+              value: "true"
+            - name: REFRESH_INTERVAL
+              value: "5m"
+            - name: ASSET_TTL
+              value: "24h"
+            - name: CLUSTER_NAME
+              value: "polaris"
+            - name: WATCH
+              value: "true"
+            - name: WATCH_DEBOUNCE
+              value: "15s"
+            - name: PUBLIC_ADDRESSES
+              value: ""
+            - name: EXCLUDE_NAMESPACES
+              value: ""
+            - name: LOG_LEVEL
+              value: "INFO"
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "polaris_discovery", "healthcheck"]
+            # The first report can take a while on a large cluster.
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 10
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 20m
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: polaris-token
+              mountPath: /var/run/secrets/polaris
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # A token for Polaris alone: its audience means the API server would refuse it,
+        # and Polaris refuses a token minted for anyone else. The kubelet rotates it.
+        - name: polaris-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: "acme-discovery"
+                  expirationSeconds: 3600
+                  path: token
+
+---
+# Source: polaris/templates/beat-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+  annotations:
+    configmap.reloader.stakater.com/reload: backend-config
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      imagePullSecrets:
+        - name: registry-credentials
+      containers:
+        - name: celery-beat
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["celery", "-A", "config", "beat", "-l", "INFO"]
+          resources:
+            requests:
+              memory: 256Mi
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-acme-app
+                  key: fqdn-uri
+            # Distinguishes beat exceptions from web/worker exceptions in PostHog
+            # (ADR-0045); all three pods share the backend-config ConfigMap.
+            - name: RELEASE
+              value: "0.99.132"
+            - name: SERVICE_NAME
+              value: polaris-beat
+            - name: DEBUG
+              value: "True"
+
+---
+# Source: polaris/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  annotations:
+    configmap.reloader.stakater.com/reload: backend-config
+spec:
+  replicas: 3
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: backend
+      imagePullSecrets:
+        - name: registry-credentials
+      nodeSelector:
+        workload: web
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: web
+      initContainers:
+        # Downloads GeoLite2-ASN before Django starts (geoip.*).
+        - name: geoip-init
+          image: "ghcr.io/maxmind/geoipupdate:v7.1.1"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              /usr/bin/geoipupdate --output || echo "geoipupdate: download failed; starting without GeoLite2 (the sidecar retries)" >&2
+          env:
+            - name: GEOIPUPDATE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_ACCOUNT_ID
+                  optional: true
+            - name: GEOIPUPDATE_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_LICENSE_KEY
+                  optional: true
+            - name: GEOIPUPDATE_EDITION_IDS
+              value: "GeoLite2-ASN GeoLite2-Country"
+            - name: GEOIPUPDATE_CONF_FILE
+              value: ""
+            - name: GEOIPUPDATE_DB_DIR
+              value: "/var/lib/geoip"
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+          volumeMounts:
+            - name: geoip
+              mountPath: /var/lib/geoip
+        - name: migrate
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          securityContext:
+            allowPrivilegeEscalation: false
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-acme-app
+                  key: fqdn-uri
+      containers:
+        - name: backend
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-acme-app
+                  key: fqdn-uri
+            # Tags PostHog events with the deployed release, and separates the web pod
+            # from the worker/beat pods that share this ConfigMap (ADR-0045).
+            - name: RELEASE
+              value: "0.99.132"
+            - name: SERVICE_NAME
+              value: polaris-backend
+            # gunicorn runs multiple workers; prometheus_client multiprocess mode
+            # writes per-process samples here for the metrics sidecar to aggregate
+            # (ADR-0019). Deliberately not exposed on the Ingress-routed port 8000.
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
+            - name: PERIMETER_DEFENCE_GEOLITE2_ASN_PATH
+              value: "/var/lib/geoip/GeoLite2-ASN.mmdb"
+          resources:
+            requests:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+          readinessProbe:
+            httpGet:
+              path: /api/health/
+              port: http
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
+            - name: geoip
+              mountPath: /var/lib/geoip
+              readOnly: true
+        # Keeps GeoLite2-ASN fresh every geoip.frequencyHours.
+        - name: geoipupdate
+          image: "ghcr.io/maxmind/geoipupdate:v7.1.1"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              trap 'exit 0' TERM INT
+              while true; do
+                if /usr/bin/geoipupdate --output; then
+                  delay=86400
+                else
+                  echo "geoipupdate: download failed; retrying in 1h" >&2
+                  delay=3600
+                fi
+                sleep "$delay" & wait $!
+              done
+          env:
+            - name: GEOIPUPDATE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_ACCOUNT_ID
+                  optional: true
+            - name: GEOIPUPDATE_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_LICENSE_KEY
+                  optional: true
+            - name: GEOIPUPDATE_EDITION_IDS
+              value: "GeoLite2-ASN GeoLite2-Country"
+            - name: GEOIPUPDATE_CONF_FILE
+              value: ""
+            - name: GEOIPUPDATE_DB_DIR
+              value: "/var/lib/geoip"
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+          volumeMounts:
+            - name: geoip
+              mountPath: /var/lib/geoip
+        # Aggregating metrics endpoint on a dedicated port the public Ingress never
+        # routes to; only the in-cluster Prometheus scraper reaches it.
+        - name: metrics-exporter
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["python", "metrics_exporter.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+          ports:
+            - name: metrics
+              containerPort: 9808
+          env:
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
+            - name: METRICS_PORT
+              value: "9808"
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
+      volumes:
+        - name: prometheus-multiproc
+          emptyDir: {}
+        - name: geoip
+          emptyDir: {}
+
+---
+# Source: polaris/templates/frontend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      imagePullSecrets:
+        - name: registry-credentials
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+      containers:
+        - name: frontend
+          image: docker.io/polarissecurity/frontend:0.99.132
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 80
+          securityContext:
+            allowPrivilegeEscalation: false
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
+
+---
+# Source: polaris/templates/monitoring-celery-exporter.yaml
+# Off-the-shelf celery-exporter (ADR-0019): consumes task events from the Valkey
+# broker and exposes throughput/failure/retry/queue-depth metrics. No worker-side
+# instrumentation — the workers just emit task events (CELERY_*_SEND_*_EVENT settings).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-exporter
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: celery-exporter
+  template:
+    metadata:
+      labels:
+        app: celery-exporter
+    spec:
+      imagePullSecrets:
+        - name: registry-credentials
+      nodeSelector:
+        workload: monitoring
+      containers:
+        - name: celery-exporter
+          image: ghcr.io/danihodovic/celery-exporter:0.12.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9808
+          env:
+            # The exporter reads the same broker the app uses; CE_* is its config prefix.
+            - name: CE_BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: REDIS_URL
+            - name: CE_PORT
+              value: "9808"
+          resources:
+            requests:
+              memory: 128Mi
+
+---
+# Source: polaris/templates/ollama-embed-deployment.yaml
+# Self-hosted Ollama for EMBEDDINGS ONLY (issue #657 semantic precedent-recall measurement).
+# Ollama Cloud (ollama.com) serves no embedding models, so the measurement needs a local
+# embedder. This is a standalone Deployment — deliberately NOT a backend sidecar — so the
+# request-serving backend stays schedulable anywhere while the GPU embedding work can be
+# pinned to a node with an NVIDIA card. Chat still runs on Ollama Cloud
+# (backend.config.OLLAMA_MODEL); only the measurement job targets this service, via a
+# per-run OLLAMA_BASE_URL=http://ollama-embed:11434 override.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-embed
+  labels:
+    app: ollama-embed
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: ollama-embed
+  template:
+    metadata:
+      labels:
+        app: ollama-embed
+    spec:
+      imagePullSecrets:
+        - name: registry-credentials
+      # Pinned to the one node with an NVIDIA card.
+      nodeSelector:
+        kubernetes.io/hostname: gpu-01
+      containers:
+        - name: ollama
+          image: docker.io/ollama/ollama:latest
+          # Start the server, wait until it answers, pull the embedding model once, then
+          # hand the foreground back to the server. Re-pull is a no-op once the model is in
+          # the mounted cache.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              pid=$!
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              # Fail the pod (CrashLoopBackOff) on a failed pull rather than serve without
+              # the model — a missing model would otherwise surface only as embed-time errors.
+              ollama pull "$OLLAMA_EMBED_MODEL" || { kill "$pid" 2>/dev/null; exit 1; }
+              wait "$pid"
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            - name: OLLAMA_EMBED_MODEL
+              value: "nomic-embed-text"
+          ports:
+            - name: http
+              containerPort: 11434
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-embed-models
+
+---
+# Source: polaris/templates/worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  annotations:
+    configmap.reloader.stakater.com/reload: backend-config
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      imagePullSecrets:
+        - name: registry-credentials
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        # Downloads GeoLite2-ASN before the worker starts (geoip.*).
+        - name: geoip-init
+          image: "ghcr.io/maxmind/geoipupdate:v7.1.1"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              /usr/bin/geoipupdate --output || echo "geoipupdate: download failed; starting without GeoLite2 (the sidecar retries)" >&2
+          env:
+            - name: GEOIPUPDATE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_ACCOUNT_ID
+                  optional: true
+            - name: GEOIPUPDATE_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_LICENSE_KEY
+                  optional: true
+            - name: GEOIPUPDATE_EDITION_IDS
+              value: "GeoLite2-ASN GeoLite2-Country"
+            - name: GEOIPUPDATE_CONF_FILE
+              value: ""
+            - name: GEOIPUPDATE_DB_DIR
+              value: "/var/lib/geoip"
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+          volumeMounts:
+            - name: geoip
+              mountPath: /var/lib/geoip
+      containers:
+        - name: celery-worker
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["celery", "-A", "config", "worker", "-l", "INFO"]
+          resources:
+            limits:
+              memory: 3096Mi
+            requests:
+              memory: 1024Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-acme-app
+                  key: fqdn-uri
+            # Distinguishes worker exceptions from web exceptions in PostHog (ADR-0045);
+            # both pods share the backend-config ConfigMap.
+            - name: RELEASE
+              value: "0.99.132"
+            - name: SERVICE_NAME
+              value: polaris-worker
+            - name: PERIMETER_DEFENCE_GEOLITE2_ASN_PATH
+              value: "/var/lib/geoip/GeoLite2-ASN.mmdb"
+            - name: DEBUG
+              value: "True"
+          volumeMounts:
+            - name: geoip
+              mountPath: /var/lib/geoip
+              readOnly: true
+        # Keeps GeoLite2-ASN fresh every geoip.frequencyHours.
+        - name: geoipupdate
+          image: "ghcr.io/maxmind/geoipupdate:v7.1.1"
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              trap 'exit 0' TERM INT
+              while true; do
+                if /usr/bin/geoipupdate --output; then
+                  delay=86400
+                else
+                  echo "geoipupdate: download failed; retrying in 1h" >&2
+                  delay=3600
+                fi
+                sleep "$delay" & wait $!
+              done
+          env:
+            - name: GEOIPUPDATE_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_ACCOUNT_ID
+                  optional: true
+            - name: GEOIPUPDATE_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: maxmind
+                  key: GEOIPUPDATE_LICENSE_KEY
+                  optional: true
+            - name: GEOIPUPDATE_EDITION_IDS
+              value: "GeoLite2-ASN GeoLite2-Country"
+            - name: GEOIPUPDATE_CONF_FILE
+              value: ""
+            - name: GEOIPUPDATE_DB_DIR
+              value: "/var/lib/geoip"
+          resources:
+            limits:
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+          volumeMounts:
+            - name: geoip
+              mountPath: /var/lib/geoip
+      volumes:
+        - name: geoip
+          emptyDir: {}
+
+---
+# Source: polaris/charts/valkey/templates/primary/application.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: polaris-valkey-primary
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/component: primary
+    app.kubernetes.io/part-of: valkey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: polaris
+      app.kubernetes.io/name: valkey
+      app.kubernetes.io/component: primary
+  serviceName: polaris-valkey-headless
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: polaris
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: valkey
+        app.kubernetes.io/version: 9.1.1
+        helm.sh/chart: valkey-6.2.4
+        app.kubernetes.io/component: primary
+      annotations:
+        checksum/configmap: c8cdc0c4c772ac3192446a08bf401c29f1e39f33614657d36e4bb1692e34b39f
+        checksum/health: 30ef46e920ea5e36fb842c2ed1175c90b698bdb5a18a244ee061ab6fad0deb34
+        checksum/scripts: 206c77dff90a106733745c2338fb507af5b23124fd669e912b7a4b377f687ca6
+        prometheus.io/port: "9121"
+        prometheus.io/scrape: "true"
+    spec:
+      
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: Always
+        supplementalGroups: []
+        sysctls: []
+      serviceAccountName: polaris-valkey-primary
+      automountServiceAccountToken: false
+      affinity:
+        podAffinity:
+          
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/instance: polaris
+                    app.kubernetes.io/name: valkey
+                    app.kubernetes.io/component: primary
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+        nodeAffinity:
+          
+      enableServiceLinks: true
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: valkey
+          image: registry-1.docker.io/bitnami/valkey:latest
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1001
+            runAsNonRoot: true
+            runAsUser: 1001
+            seLinuxOptions: {}
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+          args:
+            - -c
+            - /opt/bitnami/scripts/start-scripts/start-primary.sh
+          env:
+            - name: BITNAMI_DEBUG
+              value: "false"
+            - name: VALKEY_REPLICATION_MODE
+              value: primary
+            - name: ALLOW_EMPTY_PASSWORD
+              value: "no"
+            - name: VALKEY_PASSWORD_FILE
+              value: "/opt/bitnami/valkey/secrets/valkey-password"
+            - name: OPENSSL_FIPS
+              value: "yes"
+            - name: VALKEY_TLS_ENABLED
+              value: "no"
+            - name: VALKEY_PORT
+              value: "6379"
+          ports:
+            - name: redis
+              containerPort: 6379
+          livenessProbe:
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            # One second longer than command timeout should prevent generation of zombie processes.
+            timeoutSeconds: 6
+            successThreshold: 1
+            failureThreshold: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - /health/ping_liveness_local.sh 5
+          readinessProbe:
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - /health/ping_readiness_local.sh 1
+          resources:
+            limits:
+              cpu: 150m
+              ephemeral-storage: 2Gi
+              memory: 192Mi
+            requests:
+              cpu: 100m
+              ephemeral-storage: 50Mi
+              memory: 128Mi
+          volumeMounts:
+            - name: start-scripts
+              mountPath: /opt/bitnami/scripts/start-scripts
+            - name: health
+              mountPath: /health
+            - name: valkey-password
+              mountPath: /opt/bitnami/valkey/secrets/
+            - name: valkey-data
+              mountPath: /data
+            - name: config
+              mountPath: /opt/bitnami/valkey/mounted-etc
+            - name: empty-dir
+              mountPath: /opt/bitnami/valkey/etc/
+              subPath: app-conf-dir
+            - name: empty-dir
+              mountPath: /tmp
+              subPath: tmp-dir
+        - name: metrics
+          image: registry-1.docker.io/bitnami/redis-exporter:latest
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1001
+            runAsNonRoot: true
+            runAsUser: 1001
+            seLinuxOptions: {}
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+            - -c
+            - |
+              export REDIS_PASSWORD="$(< $REDIS_PASSWORD_FILE)"
+              redis_exporter
+          env:
+            - name: REDIS_ALIAS
+              value: polaris-valkey
+            - name: REDIS_EXPORTER_WEB_LISTEN_ADDRESS
+              value: :9121
+            - name: REDIS_USER
+              value: default
+            - name: REDIS_PASSWORD_FILE
+              value: "/secrets/valkey-password"
+            - name: OPENSSL_FIPS
+              value: "yes"
+            - name: GODEBUG
+              value: "fips140=only,tlsmlkem=0"
+          ports:
+            - name: metrics
+              containerPort: 9121
+          livenessProbe:
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            tcpSocket:
+              port: metrics
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+            httpGet:
+              path: /
+              port: metrics
+          resources:
+            limits:
+              cpu: 150m
+              ephemeral-storage: 2Gi
+              memory: 192Mi
+            requests:
+              cpu: 100m
+              ephemeral-storage: 50Mi
+              memory: 128Mi
+          volumeMounts:
+            - name: empty-dir
+              mountPath: /tmp
+              subPath: app-tmp-dir
+            - name: valkey-password
+              mountPath: /secrets/
+      volumes:
+        - name: start-scripts
+          configMap:
+            name: polaris-valkey-scripts
+            defaultMode: 0755
+        - name: health
+          configMap:
+            name: polaris-valkey-health
+            defaultMode: 0755
+        - name: valkey-password
+          
+          secret:
+            secretName: valkey-secret
+            items:
+            - key: valkey-password
+              path: valkey-password
+        - name: config
+          configMap:
+            name: polaris-valkey-configuration
+        - name: empty-dir
+          emptyDir: {}
+        - name: valkey-data
+          emptyDir: {}
+
+---
+# Source: polaris/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: polaris
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - "polaris.acme.test"
+        - "alerts.acme.test"
+      secretName: polaris-tls
+  rules:
+    - host: "polaris.acme.test"
+      http:
+        paths:
+          - path: "/api/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/django-admin/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/login-redirect/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/static/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/auth/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # Catch-all: anything not claimed above is the single-page app.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+    - host: "alerts.acme.test"
+      http:
+        paths:
+          - path: "/api/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/django-admin/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/login-redirect/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/static/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: "/auth/"
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # Catch-all: anything not claimed above is the single-page app.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+---
+# Source: polaris/templates/cnpg-cluster.yaml
+# PostgreSQL provisioned by the CloudNativePG operator, which must already be installed
+# in the cluster. Set postgres.enabled=false to bring your own database instead — then
+# postgres.urlSecret must name a Secret holding a connection URI.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-acme
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  storage:
+    size: 10Gi
+    storageClass: local-path
+  managed:
+    roles:
+      - login: true
+        name: polaris
+        superuser: true
+
+  bootstrap:
+    initdb:
+      database: polaris
+      owner: polaris
+  postgresql:
+    parameters:
+      max_connections: "150"
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: minio-store
+
+---
+# Source: polaris/templates/external-secrets.yaml
+# Populates the S3 credentials Secret that CNPG's barman-cloud plugin reads.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: minio
+spec:
+  refreshInterval: "120s"
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: minio
+    creationPolicy: Owner
+  data:
+    - secretKey: ACCESS_KEY_ID
+      remoteRef:
+        key: "kv/acme"
+        property: ACCESS_KEY_ID
+    - secretKey: ACCESS_SECRET_KEY
+      remoteRef:
+        key: "kv/acme"
+        property: ACCESS_SECRET_KEY
+
+---
+# Source: polaris/templates/cnpg-cluster.yaml
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: minio-store
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    destinationPath: "s3://acme-backups/"
+    endpointURL: "https://s3.eu-central-1.wasabisys.com"
+    s3Credentials:
+      accessKeyId:
+        name: minio
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: minio
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+      maxParallel: 8
+
+---
+# Source: polaris/templates/cnpg-cluster.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: pg-acme
+  labels:
+    prometheus: "true"
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: pg-acme
+  podMetricsEndpoints:
+    - port: metrics
+
+---
+# Source: polaris/templates/monitoring-prometheusrule.yaml
+# Operational alerts (ADR-0019) for the operator's existing Alertmanager. We ship only
+# the rules; receivers/routing are assumed already configured on the operator.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: polaris
+  labels:
+    prometheus: "true"
+spec:
+  groups:
+    - name: polaris.web
+      rules:
+        - alert: BackendMetricsDown
+          expr: up{service="backend-metrics"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Backend metrics endpoint is down"
+            description: "Prometheus cannot scrape the backend metrics sidecar for 5m; the web tier may be down."
+        - alert: BackendHigh5xxRate
+          expr: |
+            sum(rate(django_http_responses_total_by_status_total{status=~"5.."}[5m]))
+              / sum(rate(django_http_responses_total_by_status_total[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 5xx error rate on the API"
+            description: "More than 5% of HTTP responses are 5xx over the last 10m."
+    - name: polaris.celery
+      rules:
+        - alert: CeleryTaskBacklog
+          expr: sum(celery_queue_length) > 100
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Celery queue backlog is growing"
+            description: "More than 100 tasks have been queued for over 15m; workers may not be keeping up."
+        - alert: CeleryHighFailureRate
+          expr: |
+            sum(rate(celery_task_failed_total[10m]))
+              / clamp_min(sum(rate(celery_task_received_total[10m])), 1) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High Celery task failure rate"
+            description: "More than 10% of Celery tasks have failed over the last 10m."
+    - name: polaris.platform
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            rate(kube_pod_container_status_restarts_total{namespace="polaris"}[15m]) > 0
+            and on() kube_pod_container_status_waiting_reason{namespace="polaris",reason="CrashLoopBackOff"} == 1
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod is crash-looping"
+            description: "A container in polaris is restarting repeatedly (CrashLoopBackOff)."
+
+---
+# Source: polaris/templates/cnpg-cluster.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: backup-polaris-db
+spec:
+  cluster:
+    name: pg-acme
+  schedule: "0 9 0 * * *"
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+
+---
+# Source: polaris/templates/external-secrets.yaml
+# Optional external-secrets.io wiring. Off by default: the chart never requires ESO, and
+# without it you simply create the Secrets yourself (see README). Requires the
+# external-secrets operator and, for the Kubernetes auth method below, a Vault role bound
+# to this namespace's ServiceAccount.
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-backend
+spec:
+  provider:
+    vault:
+      server: "https://vault.acme.test:8200"
+      path: "kv"
+      version: "v2"
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "polaris-role"
+
+---
+# Source: polaris/charts/valkey/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: polaris-valkey
+  namespace: "polaris"
+  labels:
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/version: 9.1.1
+    helm.sh/chart: valkey-6.2.4
+    app.kubernetes.io/part-of: valkey
+spec:
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+  namespaceSelector:
+    matchNames:
+      - "polaris"
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: polaris
+      app.kubernetes.io/name: valkey
+      app.kubernetes.io/component: metrics
+
+---
+# Source: polaris/templates/monitoring-backend.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+  labels:
+    prometheus: "true"
+spec:
+  # Matches backend-metrics only, not the public `backend` Service which shares app=backend.
+  selector:
+    matchLabels:
+      app: backend
+      component: metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+
+---
+# Source: polaris/templates/monitoring-celery-exporter.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: celery-exporter
+  labels:
+    prometheus: "true"
+spec:
+  selector:
+    matchLabels:
+      app: celery-exporter
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

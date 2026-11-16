@@ -101,6 +101,11 @@ jobs:
           }
           expect_failure "blank backend.existingSecret" --set backend.existingSecret=
           expect_failure "ingress enabled with no hosts" --set ingress.hosts=null
+          expect_failure "web listing a Response Plugin credential" \
+            --set backend.secrets.mode=split \
+            --set "backend.secrets.web.keys={SECRET_KEY,REDIS_URL,ENTRA_CLIENT_SECRET}"
+          expect_failure "a workload without SECRET_KEY" --set backend.secrets.mode=split \
+            --set "backend.secrets.migrate.keys={REDIS_URL}"
           if helm template d charts/polaris-asset-discovery >/dev/null 2>&1; then
             echo "::error::expected asset discovery without polaris.url to fail the render"; exit 1
           fi

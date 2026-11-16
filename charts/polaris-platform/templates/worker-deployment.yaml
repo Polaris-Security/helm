@@ -44,7 +44,7 @@ spec:
           {{- end }}
           envFrom:
             - secretRef:
-                name: {{ include "polaris.backendSecretName" . }}
+                name: {{ include "polaris.workloadSecretName" (dict "root" . "workload" "worker") }}
             - configMapRef:
                 name: backend-config
           env:

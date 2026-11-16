@@ -4,10 +4,23 @@ Backend image: {{ include "polaris.backendImage" . }}
 Frontend image: {{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}
 
 Prerequisites this chart expects to already exist:
+{{- if include "polaris.secretsSplit" . }}
+
+  1. One Secret per backend workload (backend.secrets.mode=split), each holding only the
+     keys listed for it in backend.secrets.<workload>.keys:
+{{- range $w := list "web" "worker" "beat" "migrate" }}
+       {{ $w }}: Secret "{{ include "polaris.workloadSecretName" (dict "root" $ "workload" $w) }}"
+{{- end }}
+{{- if .Values.backend.secrets.externalSecret.enabled }}
+     external-secrets.io creates them from "{{ .Values.backend.secrets.externalSecret.remoteKey }}"; check they synced:
+       kubectl -n {{ .Release.Namespace }} get externalsecret
+{{- end }}
+{{- else }}
 
   1. Secret "{{ include "polaris.backendSecretName" . }}" — the backend environment.
      Check it is present and contains REDIS_URL:
        kubectl -n {{ .Release.Namespace }} get secret {{ include "polaris.backendSecretName" . }}
+{{- end }}
 
   2. Secret "{{ include "polaris.databaseSecretName" . }}" (key "{{ .Values.postgres.urlSecret.key }}") — the Postgres URI.
 {{- if .Values.postgres.enabled }}

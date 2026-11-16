@@ -1,0 +1,468 @@
+---
+# Source: polaris/charts/assetDiscovery/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+# The automounted token is what the Kubernetes client reads the cluster with. The token
+# presented to Polaris is a separate projected one with its own audience (deployment.yaml).
+automountServiceAccountToken: true
+
+---
+# Source: polaris/templates/backend-token-review.yaml
+# The backend web pod verifies Asset Discovery's projected token with a TokenReview
+# (ADR-0127 in polaris-security). `system:auth-delegator` grants creating TokenReviews and
+# SubjectAccessReviews and nothing else — no read of any object in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend
+automountServiceAccountToken: true
+
+---
+# Source: polaris/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  ALLOWED_HOSTS: "polaris.internal"
+  ASSET_DISCOVERY_KUBERNETES_AUDIENCE: "polaris-asset-discovery"
+  ASSET_DISCOVERY_KUBERNETES_SERVICE_ACCOUNTS: "polaris:polaris-asset-discovery"
+  ASSISTANT_LOOP_MAX_ITERATIONS: "10"
+  AUTHENTIK_ENROLLMENT_FLOW_SLUG: "default-enrollment-flow"
+  BUNKERWEB_PUBLIC_FQDN: "proxy.example.com"
+  CLOSURE_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+  CORRELATION_LLM_PROVIDER: "correlations.llm.ollama.OllamaDraftProvider"
+  CSRF_TRUSTED_ORIGINS: "https://polaris.internal"
+  DEBUG: "False"
+  DEPLOYMENT_BASE_URL: ""
+  DEPLOYMENT_NAME: "Polaris Security"
+  DISTILL_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+  EMAIL_SSL_NO_VERIFY: "True"
+  ENVIRONMENT: "production"
+  EXCEPTION_LLM_PROVIDER: "exceptions.llm.ollama.OllamaProvider"
+  INBOUND_IMAP_HOST: "mail.example.com"
+  INCIDENT_ASSISTANT_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+  KNOWLEDGE_EXCHANGE_PREMUTE_THRESHOLD: "100"
+  KNOWLEDGE_EXCHANGE_REPO: "Polaris-Security/exchange"
+  LOG_LEVEL: "INFO"
+  OLLAMA_MODEL: "gpt-oss:120b-cloud"
+  ONCALL_ROUTING: "llm_guided"
+  POSTHOG_HOST: "https://eu.i.posthog.com"
+  POSTHOG_LOGS_ENABLED: "True"
+  POSTHOG_LOG_LEVEL: "WARNING"
+  PULSEGRID_BASE_URL: ""
+  PULSEGRID_ORG_ID: ""
+  SEMAPHORE_PROJECT_ID: "1"
+  TRIAGE_AGENT_LOOP_DEADLINE_S: "300"
+  TRIAGE_AGENT_LOOP_MAX_ITERATIONS: "15"
+  TRIAGE_LLM_PROVIDER: "incidents.llm.ollama.OllamaTriageProvider"
+
+---
+# Source: polaris/charts/assetDiscovery/templates/rbac.yaml
+# Read-only, and only the kinds discovery looks at. No Secrets, no ConfigMaps, no pod logs
+# or exec: an inventory needs to know what runs, never what it holds.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, services]
+    verbs: [get, list, watch]
+  # Only to read kube-system's UID, the cluster's stable identity.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+
+---
+# Source: polaris/charts/assetDiscovery/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: polaris-asset-discovery
+subjects:
+  - kind: ServiceAccount
+    name: polaris-asset-discovery
+    namespace: polaris
+
+---
+# Source: polaris/templates/backend-token-review.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: polaris-backend-token-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: backend
+    namespace: polaris
+
+---
+# Source: polaris/templates/frontend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+# Source: polaris/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+
+---
+# Source: polaris/charts/assetDiscovery/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris-asset-discovery
+  labels:
+    app.kubernetes.io/name: assetDiscovery
+    app.kubernetes.io/instance: polaris
+    app.kubernetes.io/version: "0.99.132"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: assetDiscovery-0.1.35
+spec:
+  # One per cluster: two would send the same snapshot twice, harmless but pointless.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: assetDiscovery
+      app.kubernetes.io/instance: polaris
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: assetDiscovery
+        app.kubernetes.io/instance: polaris
+    spec:
+      serviceAccountName: polaris-asset-discovery
+      securityContext:
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: asset-discovery
+          image: "docker.io/polarissecurity/asset-discovery:0.99.132"
+          imagePullPolicy: IfNotPresent
+          args: ["run"]
+          env:
+            - name: DISCOVERY_MODE
+              value: kubernetes
+            - name: POLARIS_URL
+              value: "http://backend.polaris.svc.cluster.local:8000"
+            - name: POLARIS_KUBERNETES_TOKEN_PATH
+              value: /var/run/secrets/polaris/token
+            - name: POLARIS_VERIFY_TLS
+              value: "true"
+            - name: REFRESH_INTERVAL
+              value: "5m"
+            - name: ASSET_TTL
+              value: "24h"
+            - name: CLUSTER_NAME
+              value: "polaris"
+            - name: WATCH
+              value: "true"
+            - name: WATCH_DEBOUNCE
+              value: "15s"
+            - name: PUBLIC_ADDRESSES
+              value: ""
+            - name: EXCLUDE_NAMESPACES
+              value: ""
+            - name: LOG_LEVEL
+              value: "INFO"
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "polaris_discovery", "healthcheck"]
+            # The first report can take a while on a large cluster.
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 10
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 20m
+              memory: 96Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: polaris-token
+              mountPath: /var/run/secrets/polaris
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # A token for Polaris alone: its audience means the API server would refuse it,
+        # and Polaris refuses a token minted for anyone else. The kubelet rotates it.
+        - name: polaris-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: "polaris-asset-discovery"
+                  expirationSeconds: 3600
+                  path: token
+
+---
+# Source: polaris/templates/beat-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+  annotations:
+    configmap.reloader.stakater.com/reload: backend-config
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      containers:
+        - name: celery-beat
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["celery", "-A", "config", "beat", "-l", "INFO"]
+          resources:
+            requests:
+              memory: 256Mi
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: my-external-db
+                  key: uri
+            # Distinguishes beat exceptions from web/worker exceptions in PostHog
+            # (ADR-0045); all three pods share the backend-config ConfigMap.
+            - name: RELEASE
+              value: "0.99.132"
+            - name: SERVICE_NAME
+              value: polaris-beat
+            - name: DEBUG
+              value: "True"
+
+---
+# Source: polaris/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  annotations:
+    configmap.reloader.stakater.com/reload: backend-config
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: backend
+      initContainers:
+        - name: migrate
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: my-external-db
+                  key: uri
+      containers:
+        - name: backend
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: my-external-db
+                  key: uri
+            # Tags PostHog events with the deployed release, and separates the web pod
+            # from the worker/beat pods that share this ConfigMap (ADR-0045).
+            - name: RELEASE
+              value: "0.99.132"
+            - name: SERVICE_NAME
+              value: polaris-backend
+          resources:
+            requests:
+              memory: 512Mi
+
+---
+# Source: polaris/templates/frontend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: docker.io/polarissecurity/frontend:0.99.132
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
+
+---
+# Source: polaris/templates/worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  annotations:
+    configmap.reloader.stakater.com/reload: backend-config
+spec:
+  replicas: 1
+  revisionHistoryLimit: 
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      containers:
+        - name: celery-worker
+          image: docker.io/polarissecurity/backend:0.99.132
+          imagePullPolicy: Always
+          command: ["celery", "-A", "config", "worker", "-l", "INFO"]
+          resources:
+            limits:
+              memory: 3096Mi
+            requests:
+              memory: 1024Mi
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: my-external-db
+                  key: uri
+            # Distinguishes worker exceptions from web exceptions in PostHog (ADR-0045);
+            # both pods share the backend-config ConfigMap.
+            - name: RELEASE
+              value: "0.99.132"
+            - name: SERVICE_NAME
+              value: polaris-worker
+            - name: DEBUG
+              value: "True"

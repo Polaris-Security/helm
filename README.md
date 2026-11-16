@@ -160,7 +160,9 @@ The backend is configured entirely through environment variables. Every backend 
 (web, the `migrate` init container, celery-worker, celery-beat) gets the same set, from
 three places, later ones winning:
 
-1. **`backend.existingSecret`** — every key, via `envFrom`. Credentials go here.
+1. **`backend.existingSecret`** — every key, via `envFrom`. Credentials go here. In split
+   mode each workload mounts a Secret of its own instead; see
+   [Credentials per workload](#credentials-per-workload).
 2. **`backend.config`, then `backend.extraConfig`** — rendered into the `backend-config`
    ConfigMap, also via `envFrom`. Non-secret settings go here. A key set here overrides
    the same key in the Secret.
@@ -182,6 +184,55 @@ yourself:
 | `IDENTITY_DEFENCE_GEOLITE2_CITY_PATH` | `geoip.mountPath`, on the web and worker containers when `geoip.enabled` and `geoip.editionIds` lists `GeoLite2-City` |
 | `INTERNAL_NETWORKS`, `DEVICE_ACCESS_MODE` | `deviceAccess.internalCidrs` and `deviceAccess.mode`, when `deviceAccess.enabled` (see [Device access](#device-access)) |
 | `DEVICE_CA_CERT_PATH`, `DEVICE_CA_KEY_PATH`, `DEVICE_CA_CHAIN_PATH` | `deviceAccess.signer.mountPath`, on the web container only, when `deviceAccess.enabled` |
+
+### Credentials per workload
+
+By default every backend pod mounts `backend.existingSecret` whole (`backend.secrets.mode:
+legacy`), so the internet-facing web pod holds every credential Polaris has, including the
+ones that can sign out, reset and disable accounts in Authentik, Entra ID, NetBird and
+Mailu (Polaris PRD #1213, ADR-0159). Split mode gives each workload a Secret of its own,
+holding only the keys listed for it in values, so a pod's blast radius is its list:
+
+```yaml
+backend:
+  secrets:
+    mode: split
+    web:     { keys: [SECRET_KEY, REDIS_URL, LLM_CREDENTIAL_ENCRYPTION_KEY, OPERATIVE_SECRET_ENCRYPTION_KEY, AUTHENTIK_ENROLLMENT_API_TOKEN, POSTHOG_API_KEY, ...] }
+    worker:  { keys: [SECRET_KEY, REDIS_URL, LLM_CREDENTIAL_ENCRYPTION_KEY, OPERATIVE_SECRET_ENCRYPTION_KEY, AUTHENTIK_ENROLLMENT_API_TOKEN, AUTHENTIK_READER_API_TOKEN, ...] }
+    beat:    { keys: [SECRET_KEY, REDIS_URL] }        # the default: it only enqueues
+    migrate: { keys: [SECRET_KEY] }                   # the default
+    responseKeys: [AUTHENTIK_RESPONSE_API_TOKEN, ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, NETBIRD_API_TOKEN, MAILU_API_TOKEN, MAILU_DOVEADM_API_KEY, MAILU_SIEVE_PASSWORD]
+    externalSecret:
+      enabled: true
+      remoteKey: kv/polaris
+```
+
+- **Web never holds a Response Plugin credential.** The render fails if `web.keys` lists
+  one of `responseKeys`, or `AUTHENTIK_API_TOKEN`, `AUTHENTIK_RESPONSE_API_TOKEN`,
+  `ENTRA_CLIENT_SECRET`, `NETBIRD_API_TOKEN`, `MAILU_API_TOKEN`, `MAILU_DOVEADM_API_KEY` or
+  `MAILU_SIEVE_PASSWORD`. Split mode therefore needs Polaris's Authentik role tokens
+  (`AUTHENTIK_ENROLLMENT_API_TOKEN` on web and the worker, `AUTHENTIK_READER_API_TOKEN` on
+  the worker, `AUTHENTIK_RESPONSE_API_TOKEN` in `responseKeys`) instead of the single
+  `AUTHENTIK_API_TOKEN`.
+- **The default worker receives `responseKeys`** until the chart runs a Response Worker to
+  take them.
+- **Every workload needs `SECRET_KEY`**; web, worker and beat also need `REDIS_URL`. The
+  celery-exporter reads `REDIS_URL`, and GeoLite2 provisioning reads its two keys (unless
+  `geoip.existingSecret` is set), from the worker's Secret.
+- **List every key the workload uses.** A key left off a list is simply not there: the
+  feature reports itself unconfigured, and an unlisted `LLM_CREDENTIAL_ENCRYPTION_KEY` or
+  `OPERATIVE_SECRET_ENCRYPTION_KEY` falls back to one derived from `SECRET_KEY`, which
+  cannot decrypt what the real key encrypted. The tables below say what each key is for.
+
+With `externalSecret.enabled`, the chart renders one ExternalSecret per workload
+(`backend-web`, `backend-worker`, `backend-beat`, `backend-migrate`; rename with
+`backend.secrets.<workload>.name`) that copies exactly the listed keys from `remoteKey`.
+Every listed key must exist there: external-secrets refuses to sync a Secret with a missing
+key. Without it, create those Secrets yourself with the listed keys.
+
+To opt in safely: render with split mode, check each workload's list against what it uses,
+deploy, and only then remove the moved credentials from `backend.existingSecret`'s source.
+Setting `mode: legacy` again goes back to mounting the one Secret everywhere.
 
 Everything else is listed below. **S** marks a credential that belongs in the Secret;
 the rest go in `backend.config`. Unset integrations stay off: the features that need
@@ -500,7 +551,10 @@ helm template polaris charts/polaris-platform -f my-values.yaml
 push: `minimal-values.yaml` (every optional dependency disabled, external database) and
 `full-values.yaml` (multi-host Ingress, external-secrets, per-component scheduling,
 GeoLite2-ASN provisioning) and `geoip-values.yaml` (GeoLite2-ASN with monitoring off, so
-the backend pod's volumes come from geoip alone).
+the backend pod's volumes come from geoip alone), and `split-secrets-values.yaml` (one
+Secret per backend workload, from external-secrets). `tests/` renders the chart and checks
+what each workload receives; `tests/golden/` holds what legacy mode rendered before the
+split, which it must keep rendering.
 Add a case there when you add a value that changes what gets rendered.
 
 ## Releasing
