@@ -33,6 +33,8 @@ def test_the_response_worker_consumes_only_the_response_queue():
     c = container(docs, "celery-response-worker")
     assert c["command"][:4] == ["celery", "-A", "config", "worker"]
     assert c["command"][c["command"].index("-Q") + 1] == "response"
+    # Few, short tasks: two processes, not one per CPU, each loading Django.
+    assert c["command"][c["command"].index("-c") + 1] == "2"
     # The default worker keeps the default queue.
     assert "-Q" not in container(docs, "celery-worker")["command"]
 
@@ -97,7 +99,9 @@ def test_the_security_context_is_locked_down():
     assert c["securityContext"]["capabilities"]["drop"] == ["ALL"]
     assert c["volumeMounts"] == [{"name": "tmp", "mountPath": "/tmp"}]
     pod = find(docs, "Deployment", "celery-response-worker")["spec"]["template"]["spec"]
+    # The image runs as root and names no user: runAsNonRoot alone is refused at start.
     assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["securityContext"]["runAsUser"] == 10001
 
 
 def test_the_network_policy_lets_nothing_in_and_only_what_it_needs_out():

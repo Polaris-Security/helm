@@ -42,7 +42,8 @@ spec:
         - name: celery-response-worker
           image: {{ include "polaris.backendImage" . }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
-          command: ["celery", "-A", "config", "worker", "-Q", "response", "-n", "response@%h", "-l", "INFO"]
+          command: ["celery", "-A", "config", "worker", "-Q", "response", "-n", "response@%h",
+                    "-c", {{ $rw.concurrency | quote }}, "-l", "INFO"]
           {{- with $rw.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

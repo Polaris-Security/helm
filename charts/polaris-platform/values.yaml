@@ -267,6 +267,10 @@ backend:
   responseWorker:
     enabled: false
     replicaCount: 1
+    # Celery prefork processes. Response tasks are few and short (a confirmation, a
+    # Restore, the sweep, the health check, the Mailu snapshot), and each process loads
+    # Django, so 2 fits the memory limit below; Celery's own default is one per CPU.
+    concurrency: 2
     # Its own ServiceAccount, so Vault's Kubernetes auth can give the Response Plugin
     # credentials to this identity alone. The pod does not mount its token.
     serviceAccount:
@@ -296,8 +300,12 @@ backend:
         memory: 512Mi
       limits:
         memory: 1024Mi
+    # The backend image runs as root and names no user, so runAsNonRoot needs a UID. Its
+    # files are world-readable, and the worker writes only /tmp.
     podSecurityContext:
       runAsNonRoot: true
+      runAsUser: 10001
+      runAsGroup: 10001
       seccompProfile:
         type: RuntimeDefault
     # A read-only root filesystem: /tmp is an emptyDir.
