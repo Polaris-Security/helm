@@ -84,7 +84,7 @@ lack REDIS_URL, or when web lists a Response Plugin credential.
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- toYaml (uniq $keys) -}}
+{{- toYaml (include "polaris.withoutIntegrationCredentials" (dict "root" .root "keys" (uniq $keys)) | fromYamlArray) -}}
 {{- end -}}
 
 {{/*
@@ -174,6 +174,13 @@ read directly rather than via envFrom because only one key of it is wanted.
 - name: RESPONSE_QUEUE_ENABLED
   value: "True"
 {{- end }}
+{{- if include "polaris.credentialsVault" . }}
+# Integration credentials come from Vault when used (Polaris ADR-0160); the backend then
+# reads none of them from the environment. A pod without a Vault token (beat, migrate)
+# simply has none.
+- name: CREDENTIAL_BACKEND
+  value: vault
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -191,10 +198,10 @@ mode), when it would hold no Response Plugin credential, since it could contain 
 {{- fail (printf "backend.responseWorker.secret.keys must include %s" .) -}}
 {{- end -}}
 {{- end -}}
-{{- if and (not $response) (or $rw.externalSecret.enabled (include "polaris.secretsSplit" .)) -}}
+{{- if and (not $response) (or $rw.externalSecret.enabled (include "polaris.secretsSplit" .)) (not (include "polaris.credentialsVault" .)) -}}
 {{- fail "backend.responseWorker is enabled but backend.secrets.responseKeys is empty: the Response Worker would hold no Response Plugin credential and could contain nothing. List the plugin credentials there." -}}
 {{- end -}}
-{{- toYaml (uniq $keys) -}}
+{{- toYaml (include "polaris.withoutIntegrationCredentials" (dict "root" . "keys" (uniq $keys)) | fromYamlArray) -}}
 {{- end -}}
 
 {{/*
@@ -261,7 +268,9 @@ The backend web pod's ServiceAccount: its own when Asset Discovery needs it to c
 TokenReviews, else the namespace default as before.
 */}}
 {{- define "polaris.backendServiceAccount" -}}
-{{- if .Values.assetDiscovery.enabled -}}backend{{- end -}}
+{{- if .Values.assetDiscovery.enabled -}}backend
+{{- else if include "polaris.credentialsVault" . -}}{{ .Values.backend.credentials.web.serviceAccount }}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -495,4 +504,135 @@ polaris-device-ca
     secretName: {{ include "polaris.deviceAccess.signerSecretName" . }}
     defaultMode: 0400
 {{- end -}}
+{{- end -}}
+
+
+{{/*
+── The Credential Broker's Vault backend (Polaris PRD #1214, ADR-0160) ──────────────────
+
+Whether integration credentials are fetched from Vault on use
+(backend.credentials.backend=vault). Fails on anything but env or vault, and when vault
+has no address.
+*/}}
+{{- define "polaris.credentialsVault" -}}
+{{- $c := .Values.backend.credentials -}}
+{{- $backend := $c.backend | default "env" -}}
+{{- if eq $backend "vault" -}}
+{{- $_ := required "backend.credentials.vault.addr must be set when backend.credentials.backend is vault" $c.vault.addr -}}true
+{{- else if ne $backend "env" -}}
+{{- fail (printf "backend.credentials.backend must be env or vault, not %q" $backend) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The env vars the backend's Credential Broker reads integration credentials from with its
+env backend. With the Vault backend they are fetched on use, so no Secret holds them.
+*/}}
+{{- define "polaris.integrationCredentialKeys" -}}
+- ENTRA_TENANT_ID
+- ENTRA_CLIENT_ID
+- ENTRA_CLIENT_SECRET
+- AUTHENTIK_API_TOKEN
+- AUTHENTIK_ENROLLMENT_API_TOKEN
+- AUTHENTIK_READER_API_TOKEN
+- AUTHENTIK_RESPONSE_API_TOKEN
+- NETBIRD_API_TOKEN
+- MAILU_API_TOKEN
+- MAILU_DOVEADM_API_KEY
+- MAILU_SIEVE_PASSWORD
+- BUNKERWEB_API_TOKEN
+- SEMAPHORE_API_TOKEN
+- GITHUB_TOKEN
+- WAZUH_RULES_GITHUB_TOKEN
+{{- end -}}
+
+{{/*
+`keys` less the integration credentials when they come from Vault; `keys` otherwise.
+Usage: include "polaris.withoutIntegrationCredentials" (dict "root" . "keys" $keys)
+*/}}
+{{- define "polaris.withoutIntegrationCredentials" -}}
+{{- $keys := .keys -}}
+{{- if include "polaris.credentialsVault" .root -}}
+{{- $drop := include "polaris.integrationCredentialKeys" .root | fromYamlArray -}}
+{{- $kept := list -}}
+{{- range $keys -}}
+{{- if not (has . $drop) -}}
+{{- $kept = append $kept . -}}
+{{- end -}}
+{{- end -}}
+{{- $keys = $kept -}}
+{{- end -}}
+{{- toYaml $keys -}}
+{{- end -}}
+
+{{/* Where the projected Vault token and the Credential Manifest are mounted. */}}
+{{- define "polaris.vaultTokenDir" -}}/var/run/secrets/vault{{- end -}}
+{{- define "polaris.credentialManifestDir" -}}/etc/polaris/credentials{{- end -}}
+
+{{/*
+The Credential Broker's env for a workload ("web", "worker", "responseWorker") with the
+Vault backend; nothing otherwise.
+Usage: include "polaris.credentialEnv" (dict "root" . "workload" "web")
+*/}}
+{{- define "polaris.credentialEnv" -}}
+{{- if include "polaris.credentialsVault" .root -}}
+{{- $c := .root.Values.backend.credentials -}}
+{{- $w := index $c .workload -}}
+- name: VAULT_ADDR
+  value: {{ $c.vault.addr | quote }}
+- name: VAULT_AUTH_MOUNT
+  value: {{ $c.vault.authMount | quote }}
+- name: VAULT_AUTH_ROLE
+  value: {{ required (printf "backend.credentials.%s.role must be set" .workload) $w.role | quote }}
+- name: VAULT_KV_MOUNT
+  value: {{ $c.vault.kvMount | quote }}
+{{- with $c.vault.namespace }}
+- name: VAULT_NAMESPACE
+  value: {{ . | quote }}
+{{- end }}
+- name: VAULT_TOKEN_PATH
+  value: {{ printf "%s/token" (include "polaris.vaultTokenDir" .root) | quote }}
+- name: CREDENTIAL_MANIFEST_PATH
+  value: {{ printf "%s/manifest.json" (include "polaris.credentialManifestDir" .root) | quote }}
+- name: CREDENTIAL_TTL_SECONDS
+  value: {{ $c.vault.ttlSeconds | quote }}
+- name: CREDENTIAL_FETCH_ALERT_MINUTES
+  value: {{ $c.vault.fetchAlertMinutes | quote }}
+{{- end -}}
+{{- end -}}
+
+{{/* The workload's mounts of its Vault token and its manifest, with the Vault backend. */}}
+{{- define "polaris.credentialVolumeMounts" -}}
+{{- if include "polaris.credentialsVault" .root -}}
+- name: vault-token
+  mountPath: {{ include "polaris.vaultTokenDir" .root }}
+  readOnly: true
+- name: credential-manifest
+  mountPath: {{ include "polaris.credentialManifestDir" .root }}
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{/*
+The volumes behind those mounts: a projected ServiceAccount token bound to Vault's
+audience with a short expiry (the kubelet rotates it), and the workload's manifest.
+*/}}
+{{- define "polaris.credentialVolumes" -}}
+{{- if include "polaris.credentialsVault" .root -}}
+{{- $v := .root.Values.backend.credentials.vault -}}
+- name: vault-token
+  projected:
+    sources:
+      - serviceAccountToken:
+          path: token
+          audience: {{ $v.audience | quote }}
+          expirationSeconds: {{ $v.tokenExpirationSeconds }}
+- name: credential-manifest
+  configMap:
+    name: {{ include "polaris.credentialManifestName" . }}
+{{- end -}}
+{{- end -}}
+
+{{- define "polaris.credentialManifestName" -}}
+{{- printf "credential-manifest-%s" (.workload | kebabcase) -}}
 {{- end -}}

@@ -21,6 +21,12 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- if include "polaris.credentialsVault" . }}
+      # Its own identity for Vault's Kubernetes auth; only the projected Vault token is
+      # mounted (Polaris ADR-0160).
+      serviceAccountName: {{ .Values.backend.credentials.worker.serviceAccount }}
+      automountServiceAccountToken: false
+      {{- end }}
       {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.backend.worker) | trim) }}
       {{- nindent 6 . }}
       {{- end }}
@@ -58,10 +64,14 @@ spec:
             {{- with (include "polaris.geoip.appEnv" .) }}
             {{- nindent 12 . }}
             {{- end }}
+            {{- with (include "polaris.credentialEnv" (dict "root" . "workload" "worker")) }}
+            {{- nindent 12 . }}
+            {{- end }}
             {{- with .Values.backend.worker.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with (include "polaris.geoip.appVolumeMount" .) }}
+          {{- $mounts := printf "%s\n%s" (include "polaris.geoip.appVolumeMount" .) (include "polaris.credentialVolumeMounts" (dict "root" . "workload" "worker")) | trim }}
+          {{- with $mounts }}
           volumeMounts:
             {{- nindent 12 . }}
           {{- end }}
@@ -69,7 +79,8 @@ spec:
         # Keeps GeoLite2-ASN fresh every geoip.frequencyHours.
         {{- nindent 8 . }}
         {{- end }}
-      {{- with (include "polaris.geoip.volume" .) }}
+      {{- $volumes := printf "%s\n%s" (include "polaris.geoip.volume" .) (include "polaris.credentialVolumes" (dict "root" . "workload" "worker")) | trim }}
+      {{- with $volumes }}
       volumes:
         {{- nindent 8 . }}
       {{- end }}

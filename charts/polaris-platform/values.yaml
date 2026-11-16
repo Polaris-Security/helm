@@ -91,6 +91,58 @@ backend:
         name: ""
         kind: SecretStore
 
+  # Where integration credentials come from (Polaris PRD #1214, ADR-0160): the backend's
+  # Credential Broker.
+  #
+  #   env (the default): from the env vars in the backend's Secret(s), as before. The
+  #     render is unchanged.
+  #   vault: each credential is fetched from Vault when it is used, with Kubernetes auth
+  #     as the pod's own ServiceAccount, and held in memory briefly. web, the default
+  #     worker and the Response Worker each get a projected ServiceAccount token (audience
+  #     `vault.audience`, `vault.tokenExpirationSeconds`), their own Vault role and their
+  #     own Credential Manifest ConfigMap, rendered from `manifest` below. No ExternalSecret
+  #     copies an integration credential any more (they are left out of every key list),
+  #     and beat and migrate get no token at all. See the README's "Credentials from Vault".
+  credentials:
+    backend: env
+    vault:
+      # e.g. https://vault.acme.test:8200
+      addr: ""
+      authMount: kubernetes
+      kvMount: secret
+      namespace: ""
+      # The projected token Vault's Kubernetes auth role is bound to.
+      audience: vault
+      tokenExpirationSeconds: 600
+      # How long a fetched credential is held, unless its manifest entry sets `ttl`.
+      ttlSeconds: 300
+      # On-call is told once when fetches have failed this long.
+      fetchAlertMinutes: 10
+    # Per workload: the ServiceAccount it runs as, the Vault role bound to it, and its
+    # Credential Manifest: {name: {path, ttl, fields}}, where `path` is the kv v2 path
+    # under kvMount, `ttl` seconds, and `fields` only non-secret fields (Entra's tenant_id
+    # and client_id). Names: entra, authentik.enrollment, authentik.reader,
+    # authentik.response, netbird, mailu, doveadm, mailu.sieve, bunkerweb, semaphore,
+    # github, wazuh_rules.github. e.g.
+    #   manifest:
+    #     authentik.response: {path: polaris/response-worker/authentik-response, ttl: 30}
+    #     entra:
+    #       path: polaris/response-worker/entra
+    #       ttl: 30
+    #       fields: {tenant_id: "…", client_id: "…"}
+    web:
+      serviceAccount: backend
+      role: polaris-web
+      manifest: {}
+    worker:
+      serviceAccount: celery-worker
+      role: polaris-worker
+      manifest: {}
+    # The Response Worker runs as backend.responseWorker.serviceAccount.
+    responseWorker:
+      role: polaris-response-worker
+      manifest: {}
+
   # Hostnames Django accepts requests for. Empty ⇒ derived from ingress.hosts plus the
   # in-cluster Service DNS name, so you normally set the hostname only once, in
   # ingress.hosts. Set explicitly to take full control.

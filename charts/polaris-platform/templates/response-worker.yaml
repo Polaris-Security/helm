@@ -66,15 +66,24 @@ spec:
             # The root filesystem is read-only.
             - name: HOME
               value: /tmp
+            {{- with (include "polaris.credentialEnv" (dict "root" . "workload" "responseWorker")) }}
+            {{- nindent 12 . }}
+            {{- end }}
             {{- with $rw.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- with (include "polaris.credentialVolumeMounts" (dict "root" . "workload" "responseWorker")) }}
+            {{- nindent 12 . }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- with (include "polaris.credentialVolumes" (dict "root" . "workload" "responseWorker")) }}
+        {{- nindent 8 . }}
+        {{- end }}
 {{- $keys := include "polaris.responseWorkerKeys" . | fromYamlArray }}
 {{- if $rw.externalSecret.enabled }}
 {{- $vault := .Values.externalSecrets.secretStore.vault }}

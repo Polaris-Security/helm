@@ -85,6 +85,9 @@ spec:
             {{- with (include "polaris.deviceAccess.appEnv" .) }}
             {{- nindent 12 . }}
             {{- end }}
+            {{- with (include "polaris.credentialEnv" (dict "root" . "workload" "web")) }}
+            {{- nindent 12 . }}
+            {{- end }}
             {{- with .Values.backend.web.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -104,7 +107,7 @@ spec:
           livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or .Values.monitoring.enabled .Values.geoip.enabled .Values.deviceAccess.enabled }}
+          {{- if or .Values.monitoring.enabled .Values.geoip.enabled .Values.deviceAccess.enabled (include "polaris.credentialsVault" .) }}
           volumeMounts:
             {{- if .Values.monitoring.enabled }}
             - name: prometheus-multiproc
@@ -114,6 +117,9 @@ spec:
             {{- nindent 12 . }}
             {{- end }}
             {{- with (include "polaris.deviceAccess.appVolumeMount" .) }}
+            {{- nindent 12 . }}
+            {{- end }}
+            {{- with (include "polaris.credentialVolumeMounts" (dict "root" . "workload" "web")) }}
             {{- nindent 12 . }}
             {{- end }}
           {{- end }}
@@ -144,7 +150,7 @@ spec:
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
         {{- end }}
-      {{- if or .Values.monitoring.enabled .Values.geoip.enabled .Values.deviceAccess.enabled }}
+      {{- if or .Values.monitoring.enabled .Values.geoip.enabled .Values.deviceAccess.enabled (include "polaris.credentialsVault" .) }}
       volumes:
         {{- if .Values.monitoring.enabled }}
         - name: prometheus-multiproc
@@ -154,6 +160,9 @@ spec:
         {{- nindent 8 . }}
         {{- end }}
         {{- with (include "polaris.deviceAccess.volume" .) }}
+        {{- nindent 8 . }}
+        {{- end }}
+        {{- with (include "polaris.credentialVolumes" (dict "root" . "workload" "web")) }}
         {{- nindent 8 . }}
         {{- end }}
       {{- end }}

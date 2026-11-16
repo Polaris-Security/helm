@@ -291,6 +291,39 @@ credentials only under `kv/polaris/response-worker`, and remove them from
 The web pod also stops mounting its ServiceAccount token when Asset Discovery is off:
 nothing else on it talks to the Kubernetes API.
 
+### Credentials from Vault
+
+`backend.credentials.backend=vault` makes the backend's Credential Broker (Polaris
+ADR-0160) fetch each integration credential from Vault when it is used, instead of from
+the Secret. web, the default worker and the Response Worker then each get:
+
+- their own ServiceAccount (`backend`, `celery-worker`, `response-worker`) with no API
+  token mounted, and a projected token at `/var/run/secrets/vault/token` bound to
+  `credentials.vault.audience` with a short expiry (`tokenExpirationSeconds`, 600);
+- their own Vault role (`credentials.<workload>.role`) and their own Credential Manifest
+  ConfigMap (`credential-manifest-<workload>`), rendered from `credentials.<workload>.manifest`;
+- the env the broker reads (`CREDENTIAL_BACKEND`, `VAULT_ADDR`, `VAULT_AUTH_ROLE`, ...).
+
+Beat and migrate get no token. No ExternalSecret copies an integration credential: those
+keys are dropped from every key list. Off (the default), the render is unchanged.
+
+kv layout: one kv v2 secret per credential and workload, e.g.
+`secret/polaris/response-worker/entra` holding `client_secret`. Per workload, a policy on
+its own paths and a role bound to its ServiceAccount and the token's audience:
+
+```sh
+vault policy write polaris-response-worker - <<'HCL'
+path "secret/data/polaris/response-worker/*" { capabilities = ["read"] }
+HCL
+vault write auth/kubernetes/role/polaris-response-worker \
+  bound_service_account_names=response-worker bound_service_account_namespaces=polaris \
+  audience=vault policies=polaris-response-worker ttl=1h
+```
+
+Do the same for `polaris-web` (`backend`, `secret/data/polaris/web/*`) and
+`polaris-worker` (`celery-worker`, `secret/data/polaris/worker/*`). Turn on a Vault audit
+device to record each read, and list Vault in `responseWorker.networkPolicy.egress`.
+
 Everything else is listed below. **S** marks a credential that belongs in the Secret;
 the rest go in `backend.config`. Unset integrations stay off: the features that need
 them report themselves unconfigured rather than failing.
