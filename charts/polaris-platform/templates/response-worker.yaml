@@ -1,0 +1,172 @@
+{{- include "polaris.responseWorkerGuard" . }}
+{{- if .Values.backend.responseWorker.enabled }}
+{{- $rw := .Values.backend.responseWorker }}
+# The Response Worker (Polaris PRD #1213, ADR-0159): consumes only the `response` queue,
+# and is the one workload holding the Response Plugin credentials, the ones that can sign
+# out, reset and disable accounts in another system. Its own ServiceAccount is the
+# identity Vault gives those credentials to.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $rw.serviceAccount.name }}
+  {{- with $rw.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-response-worker
+  annotations:
+    configmap.reloader.stakater.com/reload: "backend-config"
+spec:
+  replicas: {{ $rw.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      app: celery-response-worker
+  template:
+    metadata:
+      labels:
+        app: celery-response-worker
+    spec:
+      serviceAccountName: {{ $rw.serviceAccount.name }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with (include "polaris.podSpec" (dict "root" . "component" $rw) | trim) }}
+      {{- nindent 6 . }}
+      {{- end }}
+      containers:
+        - name: celery-response-worker
+          image: {{ include "polaris.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["celery", "-A", "config", "worker", "-Q", "response", "-n", "response@%h", "-l", "INFO"]
+          {{- with $rw.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $rw.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ $rw.secret.name }}
+            - configMapRef:
+                name: backend-config
+          env:
+            {{- include "polaris.backendEnv" . | nindent 12 }}
+            - name: RELEASE
+              value: {{ .Values.backend.image.tag | quote }}
+            - name: SERVICE_NAME
+              value: polaris-response-worker
+            # The root filesystem is read-only.
+            - name: HOME
+              value: /tmp
+            {{- with $rw.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- $keys := include "polaris.responseWorkerKeys" . | fromYamlArray }}
+{{- if $rw.externalSecret.enabled }}
+{{- $vault := .Values.externalSecrets.secretStore.vault }}
+---
+# A store of its own: it signs in to Vault as the response-worker ServiceAccount, with a
+# role bound to that ServiceAccount alone, so the web and default-worker roles can never
+# read the Response Worker's path.
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: {{ $rw.externalSecret.secretStore.name }}
+spec:
+  provider:
+    vault:
+      server: {{ $vault.server | quote }}
+      path: {{ $vault.path | quote }}
+      version: {{ $vault.version | quote }}
+      auth:
+        kubernetes:
+          mountPath: {{ $vault.auth.kubernetes.mountPath | quote }}
+          role: {{ $rw.externalSecret.secretStore.role | quote }}
+          serviceAccountRef:
+            name: {{ $rw.serviceAccount.name }}
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: {{ $rw.secret.name }}
+  labels:
+    polaris.io/workload: response-worker
+spec:
+  refreshInterval: {{ .Values.externalSecrets.secretStore.refreshInterval | quote }}
+  secretStoreRef:
+    name: {{ $rw.externalSecret.secretStore.name }}
+    kind: SecretStore
+  target:
+    name: {{ $rw.secret.name }}
+    creationPolicy: Owner
+  data:
+    {{- range $keys }}
+    - secretKey: {{ . }}
+      remoteRef:
+        key: {{ $rw.externalSecret.remoteKey | quote }}
+        property: {{ . }}
+    {{- end }}
+{{- end }}
+{{- if $rw.networkPolicy.enabled }}
+---
+# Nothing reaches the Response Worker. It reaches DNS, this release's Postgres and Valkey,
+# and only the egress peers listed in backend.responseWorker.networkPolicy.egress (Vault
+# and the systems its plugins act in).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: polaris-response-worker
+spec:
+  podSelector:
+    matchLabels:
+      app: celery-response-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- if .Values.postgres.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ .Values.postgres.cluster.name }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.valkey.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: valkey
+      ports:
+        - port: 6379
+          protocol: TCP
+    {{- end }}
+    {{- with $rw.networkPolicy.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}

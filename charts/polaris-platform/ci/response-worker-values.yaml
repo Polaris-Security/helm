@@ -1,0 +1,35 @@
+# CI case: the Response Worker (Polaris ADR-0159) with per-workload Secrets from Vault.
+# It alone holds the Response Plugin credentials, through a SecretStore and Vault role of
+# its own, behind a NetworkPolicy; web has Asset Discovery off, so it mounts no token.
+externalSecrets:
+  secretStore:
+    enabled: true
+    vault:
+      server: https://vault.acme.test:8200
+
+assetDiscovery:
+  enabled: false
+
+backend:
+  secrets:
+    mode: split
+    web:
+      keys: [SECRET_KEY, REDIS_URL, AUTHENTIK_ENROLLMENT_API_TOKEN]
+    worker:
+      keys: [SECRET_KEY, REDIS_URL, AUTHENTIK_ENROLLMENT_API_TOKEN, AUTHENTIK_READER_API_TOKEN]
+    responseKeys: [AUTHENTIK_RESPONSE_API_TOKEN, ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, MAILU_API_TOKEN]
+    externalSecret:
+      enabled: true
+      remoteKey: kv/polaris/backend
+  responseWorker:
+    enabled: true
+    externalSecret:
+      enabled: true
+    networkPolicy:
+      egress:
+        - to:
+            - ipBlock:
+                cidr: 203.0.113.10/32
+          ports:
+            - port: 443
+              protocol: TCP

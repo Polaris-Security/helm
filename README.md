@@ -234,6 +234,63 @@ To opt in safely: render with split mode, check each workload's list against wha
 deploy, and only then remove the moved credentials from `backend.existingSecret`'s source.
 Setting `mode: legacy` again goes back to mounting the one Secret everywhere.
 
+### The Response Worker
+
+`backend.responseWorker.enabled` adds `celery-response-worker`, a Celery worker that
+consumes only the `response` queue and is the one workload holding the Response Plugin
+credentials (`backend.secrets.responseKeys`). Enabling it:
+
+- sets `RESPONSE_QUEUE_ENABLED=True` on every backend pod (web, worker, beat and the
+  Response Worker), which routes Confirm compromise, Restore, the response sweep, the
+  plugin health check and the Mailu snapshot to the `response` queue. Without it Polaris
+  runs all of those on the default worker;
+- takes `responseKeys` away from the default worker;
+- gives the Response Worker its own ServiceAccount (`response-worker`, token not
+  mounted), its own Secret (`backend-response-worker`: `responseWorker.secret.keys` plus
+  `responseKeys`), a read-only root filesystem, no service links, and a NetworkPolicy:
+  nothing reaches it, and it reaches only DNS, this release's Postgres and Valkey, and the
+  peers in `responseWorker.networkPolicy.egress`. List Vault and the systems its plugins
+  act in there (Authentik, NetBird, Mailu and doveadm by address; Microsoft Graph and
+  `login.microsoftonline.com` have no fixed addresses, so allow 443 broadly or egress
+  through a proxy).
+
+The render fails when the Response Worker's credentials are set up
+(`responseWorker.externalSecret.enabled`) while it is off, so confirmed compromises are
+never left with nowhere to run, and when it is on with no `responseKeys` to act with.
+
+With `responseWorker.externalSecret.enabled`, its Secret comes from Vault through a
+SecretStore of its own (`vault-response-worker`) that signs in as the `response-worker`
+ServiceAccount with its own role. Give each ServiceAccount a Kubernetes auth role that can
+read only its own path:
+
+```sh
+# The backend workloads (web, worker, beat, migrate): kv/polaris/backend only.
+vault policy write polaris-backend - <<'HCL'
+path "kv/data/polaris/backend" { capabilities = ["read"] }
+HCL
+vault write auth/kubernetes/role/polaris-role \
+  bound_service_account_names=default,backend \
+  bound_service_account_namespaces=polaris \
+  policies=polaris-backend ttl=10m
+
+# The Response Worker: kv/polaris/response-worker only, bound to its ServiceAccount alone.
+vault policy write polaris-response-worker - <<'HCL'
+path "kv/data/polaris/response-worker" { capabilities = ["read"] }
+HCL
+vault write auth/kubernetes/role/polaris-response-worker \
+  bound_service_account_names=response-worker \
+  bound_service_account_namespaces=polaris \
+  policies=polaris-response-worker ttl=10m
+```
+
+`polaris-role` is `externalSecrets.secretStore.vault.auth.kubernetes.role`; bind it to the
+ServiceAccount external-secrets signs in with for that store. Put the Response Plugin
+credentials only under `kv/polaris/response-worker`, and remove them from
+`kv/polaris/backend`, so neither the web nor the default-worker role can read them.
+
+The web pod also stops mounting its ServiceAccount token when Asset Discovery is off:
+nothing else on it talks to the Kubernetes API.
+
 Everything else is listed below. **S** marks a credential that belongs in the Secret;
 the rest go in `backend.config`. Unset integrations stay off: the features that need
 them report themselves unconfigured rather than failing.
@@ -548,13 +605,20 @@ helm template polaris charts/polaris-platform -f my-values.yaml
 ```
 
 `charts/polaris-platform/ci/*-values.yaml` hold the configurations CI renders on every
-push: `minimal-values.yaml` (every optional dependency disabled, external database) and
-`full-values.yaml` (multi-host Ingress, external-secrets, per-component scheduling,
-GeoLite2-ASN provisioning) and `geoip-values.yaml` (GeoLite2-ASN with monitoring off, so
-the backend pod's volumes come from geoip alone), and `split-secrets-values.yaml` (one
-Secret per backend workload, from external-secrets). `tests/` renders the chart and checks
-what each workload receives; `tests/golden/` holds what legacy mode rendered before the
-split, which it must keep rendering.
+push:
+
+- `minimal-values.yaml`: every optional dependency disabled, external database.
+- `full-values.yaml`: multi-host Ingress, external-secrets, per-component scheduling,
+  GeoLite2-ASN provisioning.
+- `geoip-values.yaml`: GeoLite2-ASN with monitoring off, so the backend pod's volumes come
+  from geoip alone.
+- `device-access-values.yaml`: device access enforced.
+- `split-secrets-values.yaml`: one Secret per backend workload, from external-secrets.
+- `response-worker-values.yaml`: the Response Worker with its own SecretStore, Secret and
+  NetworkPolicy.
+
+`tests/` renders the chart and checks what each workload receives. `tests/golden/` holds
+what legacy mode rendered before the per-workload split, which it must keep rendering.
 Add a case there when you add a value that changes what gets rendered.
 
 ## Releasing

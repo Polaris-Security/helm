@@ -24,6 +24,11 @@ spec:
       {{- with (include "polaris.backendServiceAccount" .) }}
       serviceAccountName: {{ . }}
       {{- end }}
+      {{- if not .Values.assetDiscovery.enabled }}
+      # Nothing on the web pod talks to the Kubernetes API except Asset Discovery's
+      # TokenReviews, so without them it does not mount a token an attacker could use.
+      automountServiceAccountToken: false
+      {{- end }}
       {{- with (include "polaris.podSpec" (dict "root" . "component" .Values.backend.web) | trim) }}
       {{- nindent 6 . }}
       {{- end }}

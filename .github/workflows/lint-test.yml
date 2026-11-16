@@ -106,6 +106,8 @@ jobs:
             --set "backend.secrets.web.keys={SECRET_KEY,REDIS_URL,ENTRA_CLIENT_SECRET}"
           expect_failure "a workload without SECRET_KEY" --set backend.secrets.mode=split \
             --set "backend.secrets.migrate.keys={REDIS_URL}"
+          expect_failure "Response Worker credentials set up while it is off" \
+            --set backend.responseWorker.externalSecret.enabled=true
           if helm template d charts/polaris-asset-discovery >/dev/null 2>&1; then
             echo "::error::expected asset discovery without polaris.url to fail the render"; exit 1
           fi

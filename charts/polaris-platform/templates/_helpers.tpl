@@ -68,7 +68,7 @@ lack REDIS_URL, or when web lists a Response Plugin credential.
 {{- define "polaris.workloadKeys" -}}
 {{- $s := .root.Values.backend.secrets -}}
 {{- $keys := (index $s .workload).keys | default list -}}
-{{- if eq .workload "worker" -}}
+{{- if and (eq .workload "worker") (not .root.Values.backend.responseWorker.enabled) -}}
 {{- $keys = concat $keys ($s.responseKeys | default list) -}}
 {{- end -}}
 {{- if not (has "SECRET_KEY" $keys) -}}
@@ -167,6 +167,45 @@ read directly rather than via envFrom because only one key of it is wanted.
     secretKeyRef:
       name: {{ include "polaris.databaseSecretName" . }}
       key: {{ .Values.postgres.urlSecret.key }}
+{{- if .Values.backend.responseWorker.enabled }}
+# Routes every task that uses a Response Plugin credential to the `response` queue the
+# Response Worker consumes (Polaris ADR-0159). Routes are applied by the sender, so every
+# backend pod gets it, and only while a worker consumes that queue.
+- name: RESPONSE_QUEUE_ENABLED
+  value: "True"
+{{- end }}
+{{- end -}}
+
+{{/*
+The keys the Response Worker's own Secret holds: backend.responseWorker.secret.keys plus
+backend.secrets.responseKeys, as a YAML list. Fails when SECRET_KEY or REDIS_URL is
+missing, or, where the chart decides what the Secret holds (its ExternalSecret, or split
+mode), when it would hold no Response Plugin credential, since it could contain nothing.
+*/}}
+{{- define "polaris.responseWorkerKeys" -}}
+{{- $rw := .Values.backend.responseWorker -}}
+{{- $response := .Values.backend.secrets.responseKeys | default list -}}
+{{- $keys := concat ($rw.secret.keys | default list) $response -}}
+{{- range list "SECRET_KEY" "REDIS_URL" -}}
+{{- if not (has . $keys) -}}
+{{- fail (printf "backend.responseWorker.secret.keys must include %s" .) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $response) (or $rw.externalSecret.enabled (include "polaris.secretsSplit" .)) -}}
+{{- fail "backend.responseWorker is enabled but backend.secrets.responseKeys is empty: the Response Worker would hold no Response Plugin credential and could contain nothing. List the plugin credentials there." -}}
+{{- end -}}
+{{- toYaml (uniq $keys) -}}
+{{- end -}}
+
+{{/*
+Refuses a Response Worker configuration that would leave containment with nowhere to run:
+its credentials set up (its ExternalSecret) while the Response Worker itself is off.
+*/}}
+{{- define "polaris.responseWorkerGuard" -}}
+{{- $rw := .Values.backend.responseWorker -}}
+{{- if and (not $rw.enabled) $rw.externalSecret.enabled -}}
+{{- fail "backend.responseWorker.externalSecret is enabled but backend.responseWorker.enabled is false: the Response Plugin credentials would sit in a Secret no workload runs with, and confirmed compromises would not be contained. Enable the Response Worker, or turn its ExternalSecret off and leave the credentials in backend.secrets.responseKeys for the default worker." -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

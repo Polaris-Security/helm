@@ -258,6 +258,71 @@ backend:
       - name: DEBUG
         value: "True"
 
+  # The Response Worker (Polaris PRD #1213, ADR-0159): a Celery worker that consumes only
+  # the `response` queue, the one workload that holds the Response Plugin credentials
+  # (backend.secrets.responseKeys), the ones that can change accounts in Authentik,
+  # Entra ID, NetBird and Mailu. Enabling it also sets RESPONSE_QUEUE_ENABLED=True on
+  # every backend pod, which is what routes those tasks to it, and takes responseKeys
+  # away from the default worker.
+  responseWorker:
+    enabled: false
+    replicaCount: 1
+    # Its own ServiceAccount, so Vault's Kubernetes auth can give the Response Plugin
+    # credentials to this identity alone. The pod does not mount its token.
+    serviceAccount:
+      name: response-worker
+      annotations: {}
+    # Its own Secret: these keys plus backend.secrets.responseKeys. SECRET_KEY and
+    # REDIS_URL are required; add what the response tasks read besides the plugin
+    # credentials (POSTHOG_API_KEY for telemetry, the encryption keys if you set them).
+    secret:
+      name: backend-response-worker
+      keys:
+        - SECRET_KEY
+        - REDIS_URL
+    # Render its Secret as an ExternalSecret through a SecretStore of its own, which signs
+    # in to Vault as the response-worker ServiceAccount with its own role, so the web and
+    # default-worker roles cannot read its path. See the README for the Vault role and
+    # policy.
+    externalSecret:
+      enabled: false
+      remoteKey: kv/polaris/response-worker
+      secretStore:
+        name: vault-response-worker
+        # Vault Kubernetes auth role bound to the response-worker ServiceAccount only.
+        role: polaris-response-worker
+    resources:
+      requests:
+        memory: 512Mi
+      limits:
+        memory: 1024Mi
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    # A read-only root filesystem: /tmp is an emptyDir.
+    securityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    extraEnv: []
+    # Nothing reaches it; it reaches only DNS, Postgres, Valkey, Vault and the systems
+    # its plugins act in.
+    networkPolicy:
+      enabled: true
+      # Vault, when its Secret comes from Vault, and the hosts of the configured Response
+      # Plugins (Authentik, Microsoft Graph and login.microsoftonline.com, NetBird, Mailu,
+      # doveadm), as NetworkPolicy egress peers and ports, e.g.
+      #   - to: [{ipBlock: {cidr: 203.0.113.10/32}}]
+      #     ports: [{port: 443, protocol: TCP}]
+      # Entra ID's hosts have no fixed addresses: allow 443 to 0.0.0.0/0 (less the
+      # cluster's ranges) or egress through a proxy.
+      egress: []
+
   # The `backend` Service the Ingress routes to. Its name is fixed (see README, Notes).
   service:
     type: ClusterIP
