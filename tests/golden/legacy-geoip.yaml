@@ -63,7 +63,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.59
+    helm.sh/chart: assetDiscovery-0.1.60
 # The automounted token is what the Kubernetes client reads the cluster with. The token
 # presented to Polaris is a separate projected one with its own audience (deployment.yaml).
 automountServiceAccountToken: true
@@ -340,7 +340,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.59
+    helm.sh/chart: assetDiscovery-0.1.60
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, services]
@@ -370,7 +370,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.59
+    helm.sh/chart: assetDiscovery-0.1.60
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -537,7 +537,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.59
+    helm.sh/chart: assetDiscovery-0.1.60
 spec:
   # One per cluster: two would send the same snapshot twice, harmless but pointless.
   replicas: 1
@@ -650,7 +650,7 @@ spec:
     spec:
       containers:
         - name: celery-beat
-          image: docker.io/polarissecurity/backend:0.99.132
+          image: docker.io/polarissecurity/backend:golden
           imagePullPolicy: Always
           command: ["celery", "-A", "config", "beat", "-l", "INFO"]
           resources:
@@ -670,7 +670,7 @@ spec:
             # Distinguishes beat exceptions from web/worker exceptions in PostHog
             # (ADR-0045); all three pods share the backend-config ConfigMap.
             - name: RELEASE
-              value: "0.99.132"
+              value: "golden"
             - name: SERVICE_NAME
               value: polaris-beat
             - name: DEBUG
@@ -739,7 +739,7 @@ spec:
             - name: geoip
               mountPath: /geoip
         - name: migrate
-          image: docker.io/polarissecurity/backend:0.99.132
+          image: docker.io/polarissecurity/backend:golden
           imagePullPolicy: Always
           command: ["python", "manage.py", "migrate", "--noinput"]
           envFrom:
@@ -755,7 +755,7 @@ spec:
                   key: fqdn-uri
       containers:
         - name: backend
-          image: docker.io/polarissecurity/backend:0.99.132
+          image: docker.io/polarissecurity/backend:golden
           imagePullPolicy: Always
           ports:
             - name: http
@@ -774,7 +774,7 @@ spec:
             # Tags PostHog events with the deployed release, and separates the web pod
             # from the worker/beat pods that share this ConfigMap (ADR-0045).
             - name: RELEASE
-              value: "0.99.132"
+              value: "golden"
             - name: SERVICE_NAME
               value: polaris-backend
             - name: PERIMETER_DEFENCE_GEOLITE2_ASN_PATH
@@ -861,7 +861,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: docker.io/polarissecurity/frontend:0.99.132
+          image: docker.io/polarissecurity/frontend:golden
           imagePullPolicy: Always
           ports:
             - name: http
@@ -1011,7 +1011,7 @@ spec:
               mountPath: /geoip
       containers:
         - name: celery-worker
-          image: docker.io/polarissecurity/backend:0.99.132
+          image: docker.io/polarissecurity/backend:golden
           imagePullPolicy: Always
           command: ["celery", "-A", "config", "worker", "-l", "INFO"]
           resources:
@@ -1033,7 +1033,7 @@ spec:
             # Distinguishes worker exceptions from web exceptions in PostHog (ADR-0045);
             # both pods share the backend-config ConfigMap.
             - name: RELEASE
-              value: "0.99.132"
+              value: "golden"
             - name: SERVICE_NAME
               value: polaris-worker
             - name: PERIMETER_DEFENCE_GEOLITE2_ASN_PATH

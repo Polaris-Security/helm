@@ -56,10 +56,15 @@ def keys_of(docs, name):
 def test_legacy_mode_renders_exactly_what_it_did_before(case):
     """Compared as parsed manifests, so a Helm version that formats YAML differently does
     not fail it; any change to what this chart deploys does. The goldens were rendered from
-    the chart before the split (a8bc259)."""
+    the chart before the split (a8bc259), with the image tags pinned to `golden`."""
     args = [] if case == "default" else ["-f", str(CI / f"{case}-values.yaml")]
     before = [d for d in yaml.safe_load_all((GOLDEN / f"legacy-{case}.yaml").read_text()) if d]
-    assert own(render(*args)) == own(before)
+    assert own(render(*args, *PINNED)) == own(before)
+
+
+# The image tags move with every Polaris release (the "update image tags" commits), so the
+# goldens and this render both pin them.
+PINNED = ["--set", "backend.image.tag=golden", "--set", "frontend.image.tag=golden"]
 
 
 def own(docs):
