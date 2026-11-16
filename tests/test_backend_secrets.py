@@ -55,10 +55,18 @@ def keys_of(docs, name):
 @pytest.mark.parametrize("case", ["default", "minimal", "full", "geoip", "device-access"])
 def test_legacy_mode_renders_exactly_what_it_did_before(case):
     """Compared as parsed manifests, so a Helm version that formats YAML differently does
-    not fail it; any change to what is deployed does."""
+    not fail it; any change to what this chart deploys does. The goldens were rendered from
+    the chart before the split (a8bc259)."""
     args = [] if case == "default" else ["-f", str(CI / f"{case}-values.yaml")]
     before = [d for d in yaml.safe_load_all((GOLDEN / f"legacy-{case}.yaml").read_text()) if d]
-    assert render(*args) == before
+    assert own(render(*args)) == own(before)
+
+
+def own(docs):
+    """What this chart's own templates render: the subcharts (Valkey, Asset Discovery) carry
+    a `helm.sh/chart` label and change with their own versions, so they are left out."""
+    return [d for d in docs
+            if "helm.sh/chart" not in ((d.get("metadata") or {}).get("labels") or {})]
 
 
 def test_legacy_mode_mounts_the_one_secret_everywhere():

@@ -63,7 +63,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.35
+    helm.sh/chart: assetDiscovery-0.1.59
 # The automounted token is what the Kubernetes client reads the cluster with. The token
 # presented to Polaris is a separate projected one with its own audience (deployment.yaml).
 automountServiceAccountToken: true
@@ -597,7 +597,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.35
+    helm.sh/chart: assetDiscovery-0.1.59
 rules:
   - apiGroups: [""]
     resources: [nodes, pods, services]
@@ -627,7 +627,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.35
+    helm.sh/chart: assetDiscovery-0.1.59
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -833,7 +833,7 @@ metadata:
     app.kubernetes.io/instance: polaris
     app.kubernetes.io/version: "0.99.132"
     app.kubernetes.io/managed-by: Helm
-    helm.sh/chart: assetDiscovery-0.1.35
+    helm.sh/chart: assetDiscovery-0.1.59
 spec:
   # One per cluster: two would send the same snapshot twice, harmless but pointless.
   replicas: 1
