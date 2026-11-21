@@ -8,7 +8,7 @@
 
 image:
   repository: docker.io/polarissecurity/asset-discovery
-  tag: 0.99.148
+  tag: 0.99.149
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
