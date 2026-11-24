@@ -46,3 +46,39 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "assetDiscovery.tokenSecretName" -}}
 {{- default (printf "%s-token" (include "assetDiscovery.fullname" .)) .Values.polaris.existingSecret -}}
 {{- end -}}
+
+{{/*
+Edge Devices: the device list the agent reads (EDGE_DEVICES_FILE), as JSON. Each device's
+credentials are mounted from its existingSecret at /secrets/edge-devices/<index>, its CA
+at /secrets/edge-devices/<index>-ca. Fails on an entry the agent would refuse.
+*/}}
+{{- define "assetDiscovery.edgeDevicesJson" -}}
+{{- $out := list -}}
+{{- $seen := dict -}}
+{{- range $i, $d := .Values.edgeDevices -}}
+{{- $where := printf "edgeDevices[%d]" $i -}}
+{{- $id := required (printf "%s.id is required" $where) $d.id | toString -}}
+{{- if hasKey $seen $id -}}{{- fail (printf "edgeDevices: id %s is listed twice" $id) -}}{{- end -}}
+{{- $_ := set $seen $id true -}}
+{{- $kind := required (printf "%s.kind is required" $where) $d.kind | toString | lower -}}
+{{- $_ := required (printf "%s.url is required" $where) $d.url -}}
+{{- $_ := required (printf "%s.existingSecret is required" $where) $d.existingSecret -}}
+{{- $dir := printf "/secrets/edge-devices/%d" $i -}}
+{{- $entry := dict "id" $id "kind" $kind "name" ($d.name | default $id | toString) "url" ($d.url | toString) -}}
+{{- if eq $kind "netscaler" -}}
+{{- $_ := set $entry "username_file" (printf "%s/username" $dir) -}}
+{{- $_ := set $entry "password_file" (printf "%s/password" $dir) -}}
+{{- else if eq $kind "bunkerweb" -}}
+{{- $_ := set $entry "token_file" (printf "%s/token" $dir) -}}
+{{- else -}}
+{{- fail (printf "%s.kind must be netscaler or bunkerweb (got %s)" $where $kind) -}}
+{{- end -}}
+{{- if $d.caSecret -}}
+{{- $_ := set $entry "verify_tls" (printf "/secrets/edge-devices/%d-ca/ca.pem" $i) -}}
+{{- else -}}
+{{- $_ := set $entry "verify_tls" (ternary true $d.verifyTls (kindIs "invalid" $d.verifyTls)) -}}
+{{- end -}}
+{{- $out = append $out $entry -}}
+{{- end -}}
+{{- toPrettyJson $out -}}
+{{- end -}}

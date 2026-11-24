@@ -26,7 +26,7 @@ supporting infrastructure it expects:
 | Monitoring | ServiceMonitors, a celery-exporter, a Grafana dashboard ConfigMap and PrometheusRule alerts for an existing kube-prometheus-stack |
 | GeoLite2-ASN | Optional (`geoip.enabled`): a `geoipupdate` init container and refreshing sidecar on the backend web and celery-worker pods that provide the MaxMind GeoLite2-ASN database the Network Clusterer groups attacker IPs by — see [GeoLite2-ASN](#geolite2-asn) |
 | external-secrets | Optional `SecretStore`/`ExternalSecret` for pulling backup credentials from Vault |
-| Asset Discovery | The `polaris-asset-discovery` subchart (`assetDiscovery.enabled`, on by default): reports this cluster's workloads, their versions and their exposure to the platform as Workload Assets in the Infrastructure organisation. It authenticates with its Kubernetes service account token, which the backend checks with a TokenReview, so the backend web pod gets its own ServiceAccount bound to `system:auth-delegator` |
+| Asset Discovery | The `polaris-asset-discovery` subchart (`assetDiscovery.enabled`, on by default): reports this cluster's workloads, their versions and their exposure to the platform as Workload Assets in the Infrastructure organisation. It authenticates with its Kubernetes service account token, which the backend checks with a TokenReview, so the backend web pod gets its own ServiceAccount bound to `system:auth-delegator`. With `assetDiscovery.edgeDevices` it also reads the listed NetScalers and BunkerWebs and reports each as an Edge Device with its Routes in the Perimeter Owner organisation (see the subchart's `values.yaml`) |
 
 Every environment-specific setting lives in `values.yaml`; the templates carry no
 site-specific values.

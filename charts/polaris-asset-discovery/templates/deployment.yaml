@@ -24,6 +24,10 @@ spec:
       {{- if and (eq $auth "token") (not .Values.polaris.existingSecret) }}
       {{- $_ := set $annotations "checksum/token" (include (print $.Template.BasePath "/secret.yaml") . | sha256sum) }}
       {{- end }}
+      {{- if .Values.edgeDevices }}
+      {{- /* The agent reads the device list once, at start-up. */}}
+      {{- $_ := set $annotations "checksum/edge-devices" (include "assetDiscovery.edgeDevicesJson" . | sha256sum) }}
+      {{- end }}
       {{- with $annotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
@@ -78,6 +82,10 @@ spec:
               value: {{ join "," .Values.publicAddresses | quote }}
             - name: EXCLUDE_NAMESPACES
               value: {{ join "," .Values.excludeNamespaces | quote }}
+            {{- if .Values.edgeDevices }}
+            - name: EDGE_DEVICES_FILE
+              value: /etc/polaris-discovery/edge-devices.json
+            {{- end }}
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
             {{- with .Values.extraEnv }}
@@ -106,6 +114,21 @@ spec:
               mountPath: /var/run/secrets/polaris
               readOnly: true
             {{- end }}
+            {{- if .Values.edgeDevices }}
+            - name: edge-devices
+              mountPath: /etc/polaris-discovery
+              readOnly: true
+            {{- range $i, $d := .Values.edgeDevices }}
+            - name: edge-device-{{ $i }}
+              mountPath: /secrets/edge-devices/{{ $i }}
+              readOnly: true
+            {{- if $d.caSecret }}
+            - name: edge-device-{{ $i }}-ca
+              mountPath: /secrets/edge-devices/{{ $i }}-ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -119,6 +142,35 @@ spec:
                   audience: {{ .Values.polaris.tokenAudience | quote }}
                   expirationSeconds: 3600
                   path: token
+        {{- end }}
+        {{- if .Values.edgeDevices }}
+        - name: edge-devices
+          configMap:
+            name: {{ include "assetDiscovery.fullname" . }}-edge-devices
+        {{- range $i, $d := .Values.edgeDevices }}
+        # {{ $d.id }}
+        - name: edge-device-{{ $i }}
+          secret:
+            secretName: {{ $d.existingSecret }}
+            items:
+              {{- if eq (lower (toString $d.kind)) "netscaler" }}
+              - key: {{ $d.usernameKey | default "username" }}
+                path: username
+              - key: {{ $d.passwordKey | default "password" }}
+                path: password
+              {{- else }}
+              - key: {{ $d.tokenKey | default "token" }}
+                path: token
+              {{- end }}
+        {{- if $d.caSecret }}
+        - name: edge-device-{{ $i }}-ca
+          secret:
+            secretName: {{ $d.caSecret }}
+            items:
+              - key: {{ $d.caKey | default "ca.pem" }}
+                path: ca.pem
+        {{- end }}
+        {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

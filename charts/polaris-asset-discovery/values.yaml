@@ -72,6 +72,33 @@ watch:
 publicAddresses: []
 excludeNamespaces: []
 
+# Edge Devices (Polaris #1339): BunkerWebs and NetScalers this agent also reads on every
+# refresh, each reported as its own Edge Device with its Routes. With kubernetes auth they
+# land in the Perimeter Owner organisation, else in `polaris.organization`. The agent only
+# reads: a NetScaler over NITRO GETs (a `read-only` system user is enough), a BunkerWeb
+# through GET /services.
+#
+# Credentials come from an existing Secret per device, mounted as files and re-read on
+# every refresh, so rotating them needs no restart. Keep a device's `id` once it has
+# reported: a new id is a new device in Polaris.
+#
+#   edgeDevices:
+#     - id: netscaler01
+#       kind: netscaler              # netscaler | bunkerweb
+#       name: NetScaler DC1          # optional, defaults to id
+#       url: https://10.0.0.5        # NITRO / BunkerWeb API base URL
+#       existingSecret: netscaler01-reader
+#       # Keys in existingSecret: username + password (netscaler) or token (bunkerweb).
+#       # usernameKey: username
+#       # passwordKey: password
+#       # tokenKey: token
+#       # TLS: true (default), false, or caSecret, a Secret whose `caKey` (ca.pem) holds
+#       # the CA that signed the device's certificate.
+#       verifyTls: true
+#       # caSecret: edge-devices-ca
+#       # caKey: ca.pem
+edgeDevices: []
+
 logLevel: INFO
 extraEnv: []
 

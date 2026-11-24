@@ -1,0 +1,19 @@
+polaris:
+  url: "http://backend.{{ .Release.Namespace }}.svc.cluster.local:8000"
+edgeDevices:
+  - id: netscaler01
+    kind: netscaler
+    url: https://10.0.0.5
+    existingSecret: netscaler01-reader
+    verifyTls: false
+  - id: netscaler02
+    kind: NetScaler
+    name: NetScaler DC2
+    url: https://10.0.0.6
+    existingSecret: netscaler02-reader
+    usernameKey: user
+    caSecret: edge-devices-ca
+  - id: bunkerweb-dmz
+    kind: bunkerweb
+    url: http://bunkerweb-api.dmz:5000
+    existingSecret: bunkerweb-dmz-reader
