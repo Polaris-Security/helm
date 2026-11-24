@@ -1,0 +1,13 @@
+{{- if .Values.edgeDevices }}
+# The Edge Devices the agent reads (EDGE_DEVICES_FILE). Credentials are not in here: each
+# device's are mounted from its own Secret, at the paths this list names.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "assetDiscovery.fullname" . }}-edge-devices
+  labels:
+    {{- include "assetDiscovery.labels" . | nindent 4 }}
+data:
+  edge-devices.json: |
+    {{- include "assetDiscovery.edgeDevicesJson" . | nindent 4 }}
+{{- end }}
